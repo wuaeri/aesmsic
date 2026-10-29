@@ -94,6 +94,9 @@ def ensure_library(tid, path):
         "quality": "",
         "analyzed": True,
     })
+    # ★ count 是给人看的那个数。只 append 不重算，它会一直停在上一批的值上
+    #   —— 2026-10-29 加《勇气》时抓到的：shelf 38 条，count 还写着 37。
+    lib["count"] = len(lib["shelf"])
     tmp = LIBRARY + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(lib, f, ensure_ascii=False, indent=2)
