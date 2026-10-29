@@ -40,3 +40,6 @@ __pycache__/
 
 # 编译产物（app/build.sh 生成）
 app/aesmsic.app/
+
+# 本机推送脚本（走 API，含仓库名）
+push.sh
