@@ -1,0 +1,2549 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MusicLab</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════
+   MusicLab · 前端
+   设计立场：这是录音棚里的仪器，不是音乐 App。
+   所以——深色、等宽数字、克制的强调色、信息密度高、没有圆角气球。
+   ═══════════════════════════════════════════════════════════════ */
+
+:root{
+  /* ★ 2026-10-18 全站换紫（作者给的谱色阶）。
+     底 = #070011 极暗深紫；中低 = Indigo #4b0082；中高 = #b026ff / #e066ff；
+     峰 = #f4e6ff。整套 UI 只走这一个色族，靠明度分层次。 */
+  --bg:        #070011;
+  --panel:     #150a26;
+  --panel-2:   #1a0b2e;
+  --line:      #2e1850;
+  --line-soft: #241140;
+  --txt:       #f4e6ff;
+  --txt-2:     #c3b0e0;
+  --dim:       #9a86bf;      /* 新底 #070011 上约 6.4:1，正文级文字站得住。
+                                （canvas 里的 DIM 读的就是这个变量，改一处全跟着走。） */
+  --accent:    #e066ff;      /* 强调色：谱色阶的中高能量，亮紫红 */
+  --accent-dim: #4b0082;     /* Indigo：中低能量，留给渐变和暗色描边 */
+  --cold:      #9b8cff;      /* 次要冷色，给"估计值"用（淡紫，和洋红区分） */
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+
+html,body{height:100%}
+body{
+  background:var(--bg);
+  color:var(--txt);
+  font:14px/1.55 -apple-system, "SF Pro Text", "PingFang SC", system-ui, sans-serif;
+  -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+
+/* ── 顶栏 ──────────────────────────────────────────────────── */
+.topbar{
+  display:flex; align-items:center; gap:16px;
+  padding:0 22px; height:52px;
+  border-bottom:1px solid var(--line-soft);
+  position:sticky; top:0; z-index:20;
+  background:rgba(7,0,17,.86);
+  backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+}
+.brand{
+  font-family:var(--mono); font-size:13px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--txt);
+}
+.brand b{color:var(--accent); font-weight:600}
+.topbar .spacer{flex:1}
+.status{
+  font-family:var(--mono); font-size:12px; color:var(--dim);
+  display:flex; align-items:center; gap:7px;
+}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--dim)}
+/* 播放指示。★ 原来是个零偏移的彩色光晕 —— 那是纯装饰，检测器判得对。
+   试过改成带偏移的版本，还是被同一规则抓到（彩色 glow 本身就是它要抓的东西），
+   干脆去掉：深色底上一颗洋红的实心点已经足够醒目，不需要再补一圈更亮的。 */
+.dot.on{background:var(--accent)}
+
+/* ── 主区 ──────────────────────────────────────────────────── */
+.wrap{max-width:1180px; margin:0 auto; padding:34px 22px 90px}
+
+.track-head{margin-bottom:26px}
+.track-title{
+  font-size:30px; font-weight:600; letter-spacing:-.02em;
+  line-height:1.2; word-break:break-word;
+}
+.track-sub{color:var(--txt-2); margin-top:6px; font-size:13px}
+.chips{display:flex; flex-wrap:wrap; gap:7px; margin-top:16px}
+.chip{
+  font-family:var(--mono); font-size:12px; color:var(--txt-2);
+  border:1px solid var(--line); border-radius:4px;
+  padding:3px 8px; letter-spacing:.03em;
+}
+.chip b{color:var(--txt); font-weight:500}
+
+/* ── 波形 ──────────────────────────────────────────────────── */
+.wave-box{
+  position:relative; height:132px;
+  background:linear-gradient(180deg,#150a26,#070011);
+  border:1px solid var(--line); border-radius:6px;
+  overflow:hidden; cursor:crosshair;
+}
+#wave{width:100%; height:100%; display:block}
+
+/* ── 走带控制 ──────────────────────────────────────────────── */
+.transport{
+  display:flex; align-items:center; gap:16px;
+  margin-top:16px; margin-bottom:44px;
+}
+.play{
+  width:44px;height:44px;flex:none;
+  border-radius:50%; border:1px solid var(--accent-dim);
+  background:transparent; color:var(--accent);
+  font-size:15px; cursor:pointer;
+  display:grid; place-items:center;
+  transition:background .16s, border-color .16s, transform .08s;
+}
+.play:hover{background:rgba(224,102,255,.1); border-color:var(--accent)}
+.play:active{transform:scale(.94)}
+
+.time{
+  font-family:var(--mono); font-size:12px; color:var(--txt-2);
+  min-width:98px; letter-spacing:.02em;
+}
+.time b{color:var(--txt); font-weight:500}
+
+/* ★ 2026-09-26：从 3px 的纯色条换成 canvas 波形条。
+   原来那条只是一根线，它只说「播到哪儿了」，不说「这首歌长什么样」。
+   现在画整曲的波形包络（已播放段提亮），再叠一个框标出
+   **频谱正在看哪一段** —— 跟全局时间窗联动：窗口切到 2 秒时那个框缩成一条缝，
+   一眼能看出放大镜架在哪儿。
+
+   内容是全曲的、**不随播放变化**，所以这里用两层缓存，
+   每帧只做两次 drawImage + 一次裁剪。
+   （刚从波形图删掉的就是这个策略 —— 波形图每帧都在滑窗口，缓存每帧都失效；
+     进度条不滑，缓存才真的省。） */
+.scrub{
+  flex:1; height:26px; position:relative; cursor:pointer;
+  border-radius:3px; overflow:hidden;
+}
+.scrub canvas{width:100%; height:100%; display:block}
+.scrub:hover canvas{filter:brightness(1.18)}
+.vol{
+  width:88px; flex:none;
+  font-family:var(--mono); font-size:12px; color:var(--dim);
+}
+input[type=range]{
+  -webkit-appearance:none; appearance:none;
+  width:100%; height:3px; background:var(--line); border-radius:2px; outline:none;
+}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none; width:11px;height:11px;border-radius:50%;
+  background:var(--txt-2); cursor:pointer;
+}
+
+/* ── 全局时间窗控制条 ────────────────────────────────────────
+   整页每一张时间轴图共用这一个窗口。sticky 是因为图在下面排得很长，
+   调窗口的时候不该要你先滚回顶部 —— 仪器上的量程旋钮不该装在机器背面。 */
+.winbar{
+  position:sticky; top:52px; z-index:15;
+  display:flex; align-items:center; gap:13px; flex-wrap:wrap;
+  padding:9px 14px; margin-bottom:18px;
+  background:rgba(21,10,38,.93);
+  -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px);
+  border:1px solid var(--line); border-radius:5px;
+}
+.wb-label{
+  font-family:var(--mono); font-size:12px; letter-spacing:.09em;
+  text-transform:uppercase; color:var(--txt-2);
+}
+.wb-range{
+  font-family:var(--mono); font-size:12px; color:var(--txt);
+  font-variant-numeric:tabular-nums; letter-spacing:.02em;
+}
+.wb-note{
+  font-size:12px; color:var(--dim); margin-left:auto;
+  letter-spacing:.01em;
+}
+
+/* ── 通用小节标题 ──────────────────────────────────────────── */
+.sec-head{
+  display:flex; align-items:baseline; gap:12px;
+  margin:0 0 18px; padding-bottom:11px;
+  border-bottom:1px solid var(--line-soft);
+}
+.sec-title{
+  font-family:var(--mono); font-size:12px; letter-spacing:.16em;
+  text-transform:uppercase; color:var(--txt-2);
+}
+
+/* ★ 真实性的标记 —— 这个播放器最要紧的一条规矩 */
+.tag{
+  font-family:var(--mono); font-size:11px; letter-spacing:.08em;
+  padding:2px 7px; border-radius:3px; white-space:nowrap;
+}
+.tag.m{ color:var(--accent); border:1px solid var(--accent-dim) }
+.tag.e{
+  color:var(--cold); border:1px dashed rgba(155,140,255,.42);
+}
+
+/* ── 指标卡 ────────────────────────────────────────────────── */
+.metrics{
+  display:grid; gap:1px;
+  grid-template-columns:repeat(auto-fit,minmax(158px,1fr));
+  background:var(--line-soft); border:1px solid var(--line-soft);
+  border-radius:6px; overflow:hidden; margin-bottom:34px;
+}
+.metric{background:var(--panel); padding:16px 17px 15px}
+.metric .k{
+  font-family:var(--mono); font-size:11px; letter-spacing:.13em;
+  text-transform:uppercase; color:var(--dim); margin-bottom:9px;
+}
+.metric .v{
+  font-family:var(--mono); font-size:26px; font-weight:500;
+  letter-spacing:-.02em; line-height:1;
+}
+.metric .v small{font-size:12px; color:var(--txt-2); margin-left:4px; font-weight:400}
+.metric .n{font-size:12px; color:var(--dim); margin-top:8px; line-height:1.4}
+.metric.est .v{color:var(--cold)}
+
+/* ── 可视化网格 ────────────────────────────────────────────── */
+.viz{display:grid; gap:26px; grid-template-columns:1fr 1fr; margin-bottom:34px}
+@media(max-width:820px){ .viz{grid-template-columns:1fr}
+  /* 窄屏上固定的 6 列会溢出，改成 3 列两行；断点只在窗口尺寸变化时触发，
+     播放时不会自己换行。 */
+  .now{grid-template-columns:repeat(3,minmax(0,1fr)); row-gap:10px}
+  .evline{justify-content:flex-start}
+}
+
+.viz-box{
+  border:1px solid var(--line); border-radius:6px;
+  background:var(--panel); overflow:hidden;
+}
+.viz-head{
+  display:flex; align-items:center; gap:9px;
+  padding:11px 14px; border-bottom:1px solid var(--line-soft);
+}
+.viz-title{font-family:var(--mono); font-size:11px; letter-spacing:.13em;
+  text-transform:uppercase; color:var(--txt-2)}
+.viz-head .spacer{flex:1}
+/* 图表右上角那句说明是**成句的话**，不是两个字的标签 —— 走 12px。
+   11px 是标签的地板，不是句子的。 */
+.viz-note{font-family:var(--mono); font-size:12px; color:var(--dim)}
+.viz-body{padding:13px 14px 15px}
+/* ★ canvas 的 width/height 属性同时是「绘图缓冲区尺寸」和「显示尺寸」。
+   脚本里按 devicePixelRatio 放大属性后，如果不锁死 CSS 高度，图会被拉变形。 */
+canvas.vizc{width:100%; height:188px; display:block}
+
+/* ★ 频谱图画布跟别的画布一样按 devicePixelRatio 放大。
+   （这里原来写的是「故意按 dpr=1 渲染，Retina 放大只会让它更糊」——
+     那句话是错的，而且正是糊的根源：dpr=1 的画布交给系统放大到物理像素，
+     等于让浏览器替我们插值一次，是**第二次**插值。
+     两条硬约束没变：CSS 尺寸必须和画布的 CSS 尺寸严格相等，
+     而且高度必须和 fit() 传的数值一致，差一点就会被拉变形。 */
+/* ★ 高度不写在这儿 —— 它必须等于频率行数（见 drawSpec），
+   写死一个数就成了「448 行 ÷ 302px = 每行 1.35 像素」那种半像素格子。 */
+canvas.spectro{width:100%; display:block; cursor:crosshair}
+canvas.loudc{height:120px}
+
+/* ── 动态频谱窗口 ────────────────────────────────────────────
+   ★ 2026-09-25 下午，作者的第二句话：「频谱图尝试做成动态的，这样就有足够
+     充足的空间让频谱打开间隔，像素自然就清晰了」。这句话把前两轮的路都否了，
+     而且是对的。
+
+     之前的两种做法（整曲铺满、按时间切 N 段）都是**一次看很多秒**：
+     62 秒摊在 1830 个物理像素上，每列 1.37px。**每列 1.37px 意味着
+     屏幕根本没法给相邻的两列不同的值** —— 一格占 1 个像素、下一格占 2 个，
+     跳来跳去。那不是「信息不够」，是**格子和屏幕像素根本对不上**。
+     实测（1333 列 → 1830px）：横向游程 1px 58.8% / 2px 35.7%，最碎的一档。
+
+     动态窗口把这件事整个绕开了：一次只看 N 秒，列数掉下来，
+     每列分到 10 个像素以上 —— 相邻列的边界清清楚楚，间隔真的"打开"了。
+     实测 8 秒窗口（172 列 → 1830px）：游程变成 10px 32.8% / 11px 57.5%，
+     宽度差 10% 而且是连续滑动的，眼睛分不出来。
+
+     ★ 窗口用「秒」定义，不用「列数」定义 —— 秒是用户唯一能感知的量。
+       每列占几个像素是算出来的结果，写在表头那行小字里（winNote）。
+
+     ★ 播放头钉在窗口正中。贴到曲子头尾时 sx 被夹住，播放头才自己走。 */
+.seg-pick{display:flex; border:1px solid var(--line); border-radius:4px; overflow:hidden}
+.seg-pick button{
+  font-family:var(--mono); font-size:11px; line-height:1; padding:5px 10px;
+  background:transparent; color:var(--dim); border:0;
+  border-right:1px solid var(--line); cursor:pointer; transition:background .12s, color .12s;
+}
+.seg-pick button:last-child{border-right:0}
+.seg-pick button:hover{color:var(--txt); background:rgba(244,230,255,.05)}
+.seg-pick button.on{color:#150a26; background:var(--accent)}
+
+.spec-over{position:relative; margin-bottom:13px}
+canvas#specov{
+  width:100%; height:84px; display:block; cursor:crosshair;
+  border:1px solid var(--line-soft); border-radius:3px;
+}
+/* 压在画面上的说明文字：必须带描边，否则压在亮的频谱上就没法读了 */
+.spec-over-tip{
+  position:absolute; left:8px; top:5px; pointer-events:none;
+  font-family:var(--mono); font-size:11px; color:var(--txt-2);
+  text-shadow:0 0 5px #000, 0 0 3px #000, 0 1px 2px #000;
+}
+
+.seg{position:relative}
+.seg-head{display:flex; align-items:baseline; gap:9px; padding:0 2px 5px}
+.seg-idx{
+  font-family:var(--mono); font-size:11px; letter-spacing:.12em;
+  color:var(--dim); transition:color .15s;
+}
+.seg-range{
+  font-family:var(--mono); font-size:11px; color:var(--dim);
+  font-variant-numeric:tabular-nums;
+}
+/* 正在播的那一段亮起来 —— 段多了以后，否则根本不知道声音走到哪儿了 */
+.seg.on .seg-idx{color:var(--accent)}
+.seg.on .seg-range{color:var(--txt-2)}
+
+/* ── 「此刻」面板 ─────────────────────────────────────────────
+   播放时实时推进的读数。这是整个页面的题眼 ——
+   「钢琴在这时入场了，就用数据呈现出来」。 */
+.now{
+  /* ★ 2026-10-18：从 flex 改成固定列宽的 grid。
+     之前每个格子的宽度由内容决定 —— 响度从「—」变成「−14.8 LUFS」时
+     格子自己会变宽，后面四格跟着整体右移，回头看又弹回去。
+     实测播放两秒：响度格在 98.5–107.8px 之间来回变，频谱重心/最强频段/
+     正在响的 x 坐标一起漂移 9.3px。现在每一列的位置钉死，值只能在
+     自己的槽里变长变短，不再推动邻居。 */
+  display:grid;
+  grid-template-columns: 96px 112px 152px 158px 300px;
+  align-items:baseline; column-gap:26px;
+  padding:12px 15px; margin-bottom:26px;
+  border:1px solid var(--line); border-radius:6px; background:var(--panel);
+}
+.now .cell{display:flex; align-items:baseline; gap:8px; min-width:0; overflow:hidden}
+.now .lbl{font-family:var(--mono); font-size:11px; color:var(--dim);
+  letter-spacing:.06em; white-space:nowrap}
+/* 等宽 + tabular-nums：数字跳动时宽度不变，整行不会左右抖 */
+.now .val{font-family:var(--mono); font-size:15px; color:var(--txt);
+  font-variant-numeric:tabular-nums; white-space:nowrap}
+.now .val small{font-size:11px; color:var(--txt-2); margin-left:3px}
+.now .val.accent{color:var(--accent)}
+.now .val.cold{color:var(--cold)}
+
+/* ★★ 抽搐的根因就在这三行。
+   这一排是 flex-wrap 的 —— **任何一个格子变宽，都可能把它挤到第二行**，
+   整块高度一变，下面所有内容跟着上下位移。表现出来就是「播放时偶尔抽搐」。
+   三个源头的宽度都会变：
+     · 频谱重心  777 Hz ↔ 1.18k Hz（字符数 6 → 7）
+     · 最强频段  「低频」和「中高频」名字长短不一
+     · 正在响    从「（静）」到六个轨名，宽度差十倍
+   三个一起抖，总宽度就会时不时越过换行阈值 —— 所以是「偶尔」不是「一直」。
+   修法：三个格子的宽度全部钉死，内容超了走省略号（flex:none 防止被压缩）。 */
+#nTime{width:64px}
+#nLufs{width:76px}
+#nCent{width:92px}
+#nBand{width:98px}
+#nStem{width:250px}
+#nTime, #nLufs, #nCent, #nBand, #nStem{
+  flex:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+
+/* 「刚刚发生」的进出点。
+   ★ 2026-10-18：改成第二行，且**永远占着 18px**。
+     原来它挤在第一行的最右边，出现时会把整排数据往左推；
+     改成 grid 的固定列以后它又会在面板右缘外面探出 24px（实测）。
+     现在它在第二行整行铺开、右对齐，空着也有高度 ——
+     出现/消失只改透明度，不再改任何几何。 */
+.evline{grid-column:1 / -1; display:flex; justify-content:flex-end; gap:16px;
+  opacity:0; min-height:18px; min-width:0; white-space:nowrap;
+  transition:opacity .18s ease}
+.evline.on{opacity:1}
+.ev{font-family:var(--mono); font-size:12px; color:var(--cold);
+  white-space:nowrap; animation:evin .28s cubic-bezier(.2,.8,.2,1)}
+.ev b{color:var(--txt); font-weight:600; margin-right:5px}
+.ev i{color:var(--dim); font-style:normal; margin-left:6px; font-size:12px}
+@keyframes evin{from{opacity:0; transform:translateX(10px)} to{opacity:1; transform:none}}
+@media (prefers-reduced-motion:reduce){ .ev{animation:none} }
+
+/* ── 频带 ──────────────────────────────────────────────────── */
+.band{display:flex; align-items:center; gap:12px; margin-bottom:9px}
+.band:last-child{margin-bottom:0}
+.band .nm{font-family:var(--mono); font-size:11px; color:var(--dim);
+  width:66px; flex:none; letter-spacing:.04em}
+.band .bar{flex:1; height:16px; background:var(--panel-2); border-radius:3px; overflow:hidden}
+.band .fil{height:100%; background:linear-gradient(90deg,var(--accent-dim),var(--accent));
+  border-radius:3px; transition:width .5s cubic-bezier(.2,.8,.2,1)}
+.band .pc{font-family:var(--mono); font-size:12px; color:var(--txt-2);
+  width:52px; text-align:right; flex:none}
+
+/* ── 分轨 ──────────────────────────────────────────────────── */
+canvas.stems-c{width:100%; height:252px; display:block}
+/* 这是**说明文字**，不是标签。标签可以 11px（就那么两三个字），
+   但成句的说明要再大一号，否则高分屏上整段是糊的 —— 检测器把它判成
+   body text 是对的，它不是界面上的一个记号，是要读的一句话。 */
+.stem-note{
+  font-family:var(--mono); font-size:12px; color:var(--dim);
+  padding:9px 14px 0; line-height:1.55;
+}
+/* 实时电平面板 —— 播放时跳动的那些条 */
+.live{display:grid; gap:5px; margin-top:14px}
+.live-row{display:flex; align-items:center; gap:10px}
+.live-row .nm{
+  font-family:var(--mono); font-size:11px; color:var(--dim);
+  width:42px; flex:none; letter-spacing:.04em; white-space:nowrap;
+}
+.live-row .tr{
+  flex:1; height:5px; background:var(--panel-2);
+  border-radius:3px; overflow:hidden;
+}
+.live-row .fl{
+  height:100%; width:0; border-radius:3px;
+  background:linear-gradient(90deg,var(--accent-dim),var(--accent));
+}
+/* ★ 这里三列数字的宽度不是排版偏好，是**防线**（2026-09-28 实测）。
+   原来 db 列 52px，而 curveToDb 最长会吐出 '-59.8 dB' —— 量出来 52.8px。
+   **差 0.8 像素**，浏览器就在那个空格处把它断成两行：行高 17 → 34，
+   底下六行全被顶下去，整块在 127/161/178/195/212/229px 之间反复跳。
+   curveToDb = v*60-60，落点 −60…0，所以只要有一轨掉到 **−10dB 以下**
+   就会触发 —— 而任何时刻总有几轨是静的，这才是"经常"的来源。
+   ⚠️ 朴素的溢出检测查不出来：断行把溢出吸收掉了，scrollWidth 一滴不多。
+      要看的是 getBoundingClientRect().height。
+   white-space:nowrap 是主修（不许断行 = 不许改高度），58px 是余量。 */
+.live-row .db{
+  font-family:var(--mono); font-size:11px; color:var(--dim);
+  width:58px; text-align:right; flex:none; white-space:nowrap;
+}
+/* 正在响的轨，名字点亮 */
+.live-row.on .nm{color:var(--accent)}
+.live-row.on .db{color:var(--txt-2)}
+/* 分段统计表 */
+.segs{
+  margin-top:16px; border-top:1px solid var(--line-soft); padding-top:13px;
+  font-family:var(--mono); font-size:11px;
+}
+.segs-row{display:flex; align-items:center; gap:10px; padding:4px 0; color:var(--dim)}
+.segs-row .nm{width:42px; flex:none}
+.segs-row .bar{
+  flex:1; height:3px; background:var(--panel-2);
+  border-radius:2px; overflow:hidden; display:flex;
+}
+.segs-row .bar i{height:100%; background:var(--accent); opacity:.55}
+/* ★ 宽度要放得下「83% · 12段 · -16.3dB」这一整串，还不能换行。
+   96px 会把「-16.3dB」挤到第二行去，六行高度参差不齐，看着像坏了。 */
+.segs-row .ct{width:168px; text-align:right; flex:none; white-space:nowrap}
+
+/* ── 声学画像：这个声部是什么性质 ─────────────────────────────
+   ★ 这一块的数据来路和上面两块**完全不同**：
+     「谁在什么时候响」里的「谁」是 Demucs 分的轨 —— **猜的**；
+     这里每一个数都是对**信号本身**直接算出来的 —— **算的**。
+     所以它顶 accent 的「实测」标记，不是 cold 的「模型猜测」。 */
+canvas.plane-c{width:100%; height:300px; display:block}
+
+/* 图例。六个声部的颜色要在这里交代清楚，图上才有意义。 */
+.plane-legend{
+  display:flex; flex-wrap:wrap; gap:15px;
+  padding:12px 14px 0;
+}
+.plane-legend .lg{
+  display:flex; align-items:center; gap:6px;
+  font-family:var(--mono); font-size:11px; color:var(--dim);
+  letter-spacing:.04em;
+}
+.plane-legend .sw{width:7px; height:7px; border-radius:50%; flex:none}
+
+/* 实时电平行末尾接的两列：当前时刻的质心 / 衰减。
+   ★ 必须 tabular-nums —— 不锁数字宽的话，质心从 999Hz 跳到 1.02k 时
+     整行会往左挤一下，六行一起抖，看着像页面在抽搐。 */
+.live-row .ctr, .live-row .dcy{
+  font-family:var(--mono); font-size:11px; color:var(--dim);
+  width:58px; text-align:right; flex:none; white-space:nowrap;
+  font-variant-numeric:tabular-nums;
+  transition:color .18s;
+}
+.live-row.on .ctr{color:var(--txt-2)}
+
+/* ── 曲库 ──────────────────────────────────────────────────── */
+.shelf{border:1px solid var(--line); border-radius:6px; overflow:hidden}
+.item{
+  display:flex; align-items:center; gap:14px;
+  padding:13px 16px; cursor:pointer;
+  border-bottom:1px solid var(--line-soft);
+  background:var(--panel); transition:background .13s;
+}
+.item:last-child{border-bottom:0}
+.item:hover{background:var(--panel-2)}
+.item.on{background:var(--panel-2); box-shadow:inset 2px 0 0 var(--accent)}
+.item .idx{font-family:var(--mono); font-size:12px; color:var(--dim); width:22px; flex:none}
+.item .ttl{font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.item .rt{margin-left:auto; font-family:var(--mono); font-size:12px; color:var(--dim); flex:none}
+/* 喂歌流水线（pipeline.py）的状态点。
+   只在"还没齐"的歌上出现：琥珀=正在算，红=算挂了。齐了就不画点 ——
+   和「不编数据」同一个立场：没有状态可报的时候，界面上就不该有那个位置。 */
+.item .st{width:5px; height:5px; border-radius:50%; flex:none; margin-left:9px; background:transparent}
+.item .st.busy{background:var(--accent); animation:stpulse 1.4s ease-in-out infinite}
+.item .st.err{background:#c0392b}
+@keyframes stpulse{0%,100%{opacity:.2} 50%{opacity:1}}
+
+.empty{
+  padding:60px 20px; text-align:center; color:var(--dim);
+  font-size:13px; border:1px dashed var(--line); border-radius:6px;
+}
+.empty code{
+  font-family:var(--mono); color:var(--txt-2);
+  background:var(--panel-2); padding:3px 7px; border-radius:4px;
+  display:inline-block; margin-top:12px; font-size:12px;
+}
+
+.foot{
+  margin-top:52px; padding-top:20px; border-top:1px solid var(--line-soft);
+  font-family:var(--mono); font-size:12px; color:var(--dim);
+  display:flex; gap:18px; flex-wrap:wrap; letter-spacing:.03em;
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">Music<b>Lab</b></div>
+  <div class="spacer"></div>
+  <div class="status"><span class="dot" id="dot"></span><span id="status">就绪</span></div>
+</header>
+
+<div class="wrap">
+
+  <div class="track-head">
+    <div class="track-title" id="title">—</div>
+    <div class="track-sub" id="sub">选一个音轨</div>
+    <div class="chips" id="chips"></div>
+  </div>
+
+  <div class="wave-box" id="wavebox">
+    <canvas id="wave"></canvas>
+  </div>
+
+  <div class="transport">
+    <button class="play" id="play">▶</button>
+    <div class="time"><b id="tcur">0:00</b> / <span id="tdur">0:00</span></div>
+    <div class="scrub" id="scrub"><canvas id="scurb"></canvas></div>
+    <div class="vol"><input type="range" id="vol" min="0" max="1" step="0.01" value="0.8"></div>
+  </div>
+
+  <!-- 分析 -->
+  <div id="analysis" style="display:none">
+
+    <!-- 此刻：播放时随 currentTime 实时推进的读数。
+         频谱重心和当前频段构成是从频谱图那一列现算的，不是预存的。 -->
+    <div class="now" id="now">
+      <div class="cell"><span class="lbl">此刻</span>
+        <span class="val" id="nTime">0:00.0</span></div>
+      <div class="cell"><span class="lbl">响度</span>
+        <span class="val" id="nLufs">—</span></div>
+      <div class="cell"><span class="lbl">频谱重心</span>
+        <span class="val" id="nCent">—</span></div>
+      <div class="cell"><span class="lbl">最强频段</span>
+        <span class="val" id="nBand">—</span></div>
+      <div class="cell" id="nStemCell" style="display:none">
+        <span class="lbl">正在响</span>
+        <span class="val accent" id="nStem">—</span></div>
+      <!-- 播放头刚刚扫过一个入/退场点时，这里亮三秒 -->
+      <div class="evline" id="evline"></div>
+    </div>
+
+    <div class="sec-head">
+      <span class="sec-title">测量值</span>
+      <span class="tag m">从信号直接算 · 无猜测</span>
+    </div>
+    <div class="metrics" id="metrics"></div>
+
+    <div class="sec-head">
+      <span class="sec-title">结构</span>
+      <span class="tag m">测量值</span>
+    </div>
+
+    <!-- ★ 2026-09-26：全局时间窗。
+         整页每一张时间轴图都吃这一个窗口 —— 波形、频谱、响度、分轨、声学画像
+         画的是**同一段时间**。以前是各切各的：频谱放大到 2 秒了，
+         下面的响度还是全曲，同一块屏幕上几条横轴刻度全不一样，看见的东西对不上。
+
+         上限 16s 是因为屏幕物理宽约 2136px —— 16 秒的窗口里每列只剩 1.55 像素，
+         会回到"一格 1px、下一格 2px"那种参差。
+         下限方向反过来：2s 时每列 12.4 像素很锐，但**响度**在 2 秒尺度上
+         本来就没有分辨力（400ms 的窗），所以那张图里画了一根比例尺说明这件事。 -->
+    <div class="winbar" id="winbar">
+      <span class="wb-label">时间窗</span>
+      <div class="seg-pick" id="winpick" title="一次显示多少秒 · 全页共用">
+        <button data-s="2">2s</button>
+        <button data-s="4">4s</button>
+        <button data-s="8" class="on">8s</button>
+        <button data-s="16">16s</button>
+      </div>
+      <span class="wb-range" id="winrange">—</span>
+      <span class="wb-note">波形 · 频谱 · 响度 · 分轨 · 声学画像 —— 同一段时间</span>
+    </div>
+
+    <div class="viz-box" style="margin-bottom:26px">
+      <div class="viz-head">
+        <span class="viz-title">频谱图</span>
+        <span class="tag m" style="font-size:11px">实测</span>
+        <span class="spacer"></span>
+        <span class="viz-note" id="segnote"></span>
+      </div>
+      <div class="viz-body" style="padding:13px 14px 6px">
+        <div class="spec-over">
+          <canvas id="specov" height="84"></canvas>
+          <span class="spec-over-tip"
+            >全曲概览 · 横轴=时间 · 纵轴=频率（对数）· 亮度=能量 · 点一下定位</span>
+        </div>
+        <div class="seg">
+          <canvas id="spec1" class="spectro"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="viz-box" style="margin-bottom:34px">
+      <div class="viz-head">
+        <span class="viz-title">响度曲线</span>
+        <span class="tag m" style="font-size:11px">实测</span>
+        <span class="spacer"></span>
+        <span class="viz-note">LUFS · 与上面那条概览共用同一条时间轴</span>
+      </div>
+      <div class="viz-body" style="padding:13px 14px 8px">
+        <canvas class="vizc loudc" id="loud" height="120"></canvas>
+      </div>
+    </div>
+
+    <div class="viz-box" style="margin-bottom:34px">
+      <div class="viz-head">
+        <span class="viz-title">五段频带能量</span>
+        <span class="tag m" style="font-size:11px">实测</span>
+        <span class="spacer"></span>
+        <span class="viz-note" id="bandnote"></span>
+      </div>
+      <div class="viz-body" id="bands"></div>
+    </div>
+
+    <div class="sec-head">
+      <span class="sec-title">推断值</span>
+      <span class="tag e">模型猜测 · 可能是错的</span>
+    </div>
+    <div class="metrics" id="metrics2"></div>
+
+    <!-- ── 分轨：谁在什么时候响 ── -->
+    <div id="stemsec" style="display:none">
+
+      <div class="sec-head" style="margin-top:44px">
+        <span class="sec-title">分轨</span>
+        <span class="tag e">模型分离 · 轨的划分是猜的</span>
+      </div>
+
+      <div class="viz-box" id="stembox">
+        <div class="viz-head">
+          <span class="viz-title">谁在什么时候响</span>
+          <span class="spacer"></span>
+          <span class="viz-note">横轴时间 · 高度能量 · 竖线是进出</span>
+        </div>
+        <div class="viz-body" style="padding:30px 14px 16px">
+          <canvas class="stems-c" id="stems" height="252"></canvas>
+        </div>
+        <div class="stem-note" id="stemnote"></div>
+      </div>
+
+      <!-- ── 声学画像 ──
+           质心 × 衰减的平面。每个声部是一个点，播放时点会移动。
+           ★ 这张图回答的是「这个正响着的东西是什么性质」，不是「它是什么乐器」——
+             后者 Demucs 拿不准（官方自己说钢琴轨 not working great），
+             前者是能直接算的。所以整块标「实测」。 -->
+      <div class="viz-box" id="planebox" style="margin-top:22px">
+        <div class="viz-head">
+          <span class="viz-title">声学画像</span>
+          <span class="tag m" style="font-size:11px">实测</span>
+          <span class="spacer"></span>
+          <span class="viz-note">横轴 = 谱质心 · 纵轴 = 音符级衰减 · 点随播放移动</span>
+        </div>
+        <div class="viz-body" style="padding:13px 14px 6px">
+          <canvas class="plane-c" id="plane" height="300"></canvas>
+        </div>
+        <div class="plane-legend" id="planelegend"></div>
+        <div class="stem-note" id="planenote"></div>
+      </div>
+
+      <div class="viz-box" style="margin-top:22px">
+        <div class="viz-head">
+          <span class="viz-title">实时电平</span>
+          <span class="spacer"></span>
+          <span class="viz-note" id="livenote">播放时随进度跳动</span>
+        </div>
+        <div class="viz-body">
+          <div class="live" id="live"></div>
+          <div class="segs" id="segs"></div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <div class="empty" id="emptymsg">
+    还没有音轨。<br>
+    把音频放进 <code>media/</code>，然后跑 <code>python3 analyze.py media/你的文件.wav</code>
+  </div>
+
+  <div class="sec-head" style="margin-top:44px">
+    <span class="sec-title">曲库</span>
+  </div>
+  <div class="shelf" id="shelf"></div>
+
+  <div class="foot">
+    <span>MusicLab 0.1</span>
+    <span id="fmeta"></span>
+  </div>
+</div>
+
+<audio id="audio" preload="metadata"></audio>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   数据里有一个字段贯穿始终：method —— "measured" 还是 "estimated"。
+   前端据此把两类数据在视觉上分开。混在一起展示就是骗人。
+   ═══════════════════════════════════════════════════════════════ */
+
+const $ = s => document.querySelector(s);
+const audio = $('#audio');
+let A = null;          // 当前分析数据
+let lib = [];
+
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const ACCENT = css('--accent'), COLD = css('--cold'),
+      DIM = css('--dim'), LINE = css('--line'), TXT2 = css('--txt-2');
+
+/* ── 高清画布：按 devicePixelRatio 放大，否则线条糊 ───────────
+   forceDpr 保留着，但**没有调用点再用它了** —— 频谱图曾经是唯一一个，
+   后来发现「按 1 倍画、让系统放大」本身就是一层额外的插值。
+   任何画到屏幕上的东西都该走物理像素。 */
+function fit(cv, h, forceDpr){
+  const dpr = forceDpr || window.devicePixelRatio || 1;
+  const w = cv.clientWidth || cv.parentElement.clientWidth;
+  const W = Math.max(1, Math.round(w * dpr));
+  const H = Math.max(1, Math.round((h || cv.height) * dpr));
+  // ★ 只在尺寸真的变了才写。给 canvas.width/height 赋值会**清空整张位图**
+  //   并把变换重置回单位矩阵 —— 尺寸没变时写它等于每帧白清一次。
+  //   分段之后画布从 1 张变成 N 张，这个白清也跟着 ×N。
+  //   （变换不受这个分支影响：下面无论如何都会 setTransform。）
+  if (cv.width !== W || cv.height !== H){ cv.width = W; cv.height = H; }
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { g, w, h: h || cv.height, dpr };
+}
+
+const fmtTime = s => {
+  if (!isFinite(s)) return '0:00';
+  const m = Math.floor(s / 60), x = Math.floor(s % 60);
+  return m + ':' + String(x).padStart(2, '0');
+};
+const setStatus = (t, on) => { $('#status').textContent = t; $('#dot').classList.toggle('on', !!on); };
+
+/* ══ 全局时间窗 ══════════════════════════════════════════════════
+   ★ 2026-09-26：整页只有**一个**窗口状态。
+
+   在这之前是各画各的 —— 频谱切到 2 秒了，下面响度还是全曲，
+   同一块屏幕上几条横轴的刻度全不一样，看见的东西根本对不上。
+   现在每一张时间轴图都调 winRange()，画的是**同一段时间**。
+
+   窗口用**秒**定义，不用列、不用格 —— 每个视图各自换算成自己的坐标，
+   所以换歌、改参数、加新的图，都不用动这一个数。 */
+let winSec = 8;                 // 当前窗口时长（秒）★ 作者定的默认：8 秒
+                                //   可选值 2/4/8/16 写在 winbar 的按钮上（见 HTML），
+                                //   不在这儿再列一份 —— 两份清单迟早对不上。
+
+function winRange(dur, prog){
+  const len = Math.min(winSec, dur);
+  let t0 = prog * dur - len / 2;
+  // 贴边：窗口别跑到歌外面去
+  t0 = Math.max(0, Math.min(Math.max(0, dur - len), t0));
+  return { t0, t1: t0 + len, len };
+}
+
+/* 把一段原始序列池化到 buckets 个桶，每桶取**最大值**。
+
+   ★ 取 max 不取平均 —— 平均会把鼓的瞬态抹平，波形就成了一条糊香肠。
+   ★ 桶数由调用方定：**缩小**时按像素并桶（取 max 保住峰值），
+     **放大**时一点一桶（不插值 —— 柱与柱之间留缝才是波形的画法）。
+     该不该插值取决于缩放方向，这条在频谱上栽过一次。 */
+function poolMax(arr, i0, i1, buckets){
+  const out = new Float32Array(buckets);
+  const n = arr.length;
+  for (let b = 0; b < buckets; b++){
+    const a = i0 + (i1 - i0) * b / buckets;
+    const z = i0 + (i1 - i0) * (b + 1) / buckets;
+    let m = 0;
+    for (let i = Math.max(0, a | 0); i < z && i < n; i++){
+      if (arr[i] > m) m = arr[i];
+    }
+    out[b] = m;
+  }
+  return out;
+}
+
+/* ── 波形 ────────────────────────────────────────────────────
+   ★ 2026-09-26：改成**窗口视图**。
+   以前是整曲铺满一屏（2000 点铺 2000 像素，两层离屏 + 裁剪叠加）。
+   现在跟着全局时间窗走：2 秒的窗口里 323 根柱子，每根约 3 个 CSS 像素。
+   整曲的位置交给上面那条频谱概览，这里不重复第二遍。
+
+   每帧重算，不做缓存 —— 窗口跟着播放滑，缓存每一帧都失效，
+   建缓存的成本比直接画还高。实测这个循环对 4 万个点也不吃力。 */
+function drawWave(prog = 0){
+  const cv = $('#wave'); if (!cv) return;
+  const { g, w, h } = fit(cv, 132);
+  g.clearRect(0, 0, w, h);
+  if (!A || !A.waveform || !A.waveform.peaks.length) return;
+
+  const p = A.waveform.peaks, N = p.length, dur = A.meta.duration;
+  const { t0, len } = winRange(dur, prog);
+  const i0 = (t0 / dur) * N, i1 = ((t0 + len) / dur) * N;
+
+  // 桶数：放大时一点一桶，缩小时约 3 CSS 像素一桶
+  const buckets = Math.max(1, Math.min(Math.round(i1 - i0), Math.round(w / 3)));
+  const step = Math.max(1, w / buckets * 0.82);
+
+  /* ★ 2026-10-18 修「波形颤抖」：
+     原来直接 poolMax(p, i0, i1, buckets)，i0 随播放连续滑动。
+     每个桶的取样边界因此每帧都在小数位上游移 —— 8 秒窗口里一桶约
+     3.5 个采样点，边界一晃就换掉整批点，同一根柱子的 max 在相邻两帧
+     之间来回跳。画面看起来就是整条波形在抖/沸腾，而且每首歌都有。
+
+     修法：把窗口起点吸附到**全局桶格**上（i0s 是 span 的整数倍）。
+     桶的绝对边界从此固定，柱高只由它自己那一段音频决定；窗口移动
+     变成整体平移，不再是每一帧重新掷骰子。
+     span 在播放期间是常数（i1-i0 只由时长和窗口秒数决定）。 */
+  const span = Math.max(1e-9, (i1 - i0) / buckets);
+  const i0s = Math.floor(i0 / span) * span;
+  // 多算一桶：吸附后窗口右缘可能差最多一个桶宽（约 3px），
+  // 补一根才不会在右边界留一条随窗口闪烁的空缝。
+  const nBars = buckets + 1;
+  const vals = poolMax(p, i0s, i0s + nBars * span, nBars);
+
+  const mid = h / 2, amp = mid - 6;
+  const pxProg = Math.max(0, Math.min(1, (prog * dur - t0) / (len || 1))) * w;
+
+  g.fillStyle = 'rgba(244,230,255,.06)';
+  g.fillRect(0, mid, w, 1);                       // 中线
+
+  let lit = null;
+  for (let b = 0; b < nBars; b++){
+    // x 用「吸附后的桶起点相对真实窗口起点」算，整排柱子随窗口平滑平移。
+    // 画布自身会裁掉超出边界的部分，不需要额外的 clip。
+    const x = (i0s + b * span - i0) / (i1 - i0) * w;
+    const isLit = x + step <= pxProg;
+    if (isLit !== lit){
+      g.fillStyle = isLit ? ACCENT : 'rgba(195,176,224,.30)';
+      lit = isLit;
+    }
+    const a = vals[b] * amp;
+    g.fillRect(x, mid - a, step, a * 2 || 1);
+  }
+}
+
+/* ── 播放进度条 ──────────────────────────────────────────────
+   整曲波形条：已播放段提亮，再叠一个框标出**频谱正在看哪一段**。
+
+   ★ 跟上面那张波形图**不是重复**，是同一个数据的两种尺度：
+       进度条 = 整曲的位置（你要拖到哪儿）
+       波形图 = 这 8 秒长什么样（你要看什么）
+     一个是导航，一个是内容。
+
+   ★ 这里用两层缓存（跟波形图相反）：进度条的内容是全曲的、**不随播放变化**，
+     每帧只有颜色分界和播放头在动，所以两次 drawImage + 一次裁剪就够了。
+     波形图那边每帧窗口都在滑，缓存每帧都失效，所以那边改成直接画。 */
+let scrubBase = null, scrubLit = null, scrubKey = '';
+
+function buildScrubLayers(w, h){
+  const p = A.waveform.peaks, n = p.length;
+  scrubKey = A.id + '|' + w + 'x' + h;
+  // 每 2 CSS 像素一桶。这条只有 26px 高，一比一画柱子反而糊成一片，
+  // 两像素一桶的包络更清楚。
+  const buckets = Math.max(1, Math.round(w / 2));
+  const vals = poolMax(p, 0, n, buckets);
+  const colW = w / buckets, barW = Math.max(1, colW * 0.9);
+  const mid = h / 2, amp = mid - 3;
+
+  const paint = (g, isLit) => {
+    g.fillStyle = isLit ? ACCENT : 'rgba(195,176,224,.26)';
+    for (let b = 0; b < buckets; b++){
+      const a = vals[b] * amp;
+      g.fillRect(b * colW, mid - a, barW, a * 2 || 1);
+    }
+  };
+
+  const dpr = window.devicePixelRatio || 1;
+  const [cb, gb] = _layer(w, h, dpr);
+  paint(gb, false);
+  gb.fillStyle = 'rgba(244,230,255,.05)';
+  gb.fillRect(0, mid, w, 1);                  // 中线
+  scrubBase = cb;
+
+  const [cl, gl] = _layer(w, h, dpr);
+  paint(gl, true);
+  scrubLit = cl;
+}
+
+function drawScrub(prog = 0){
+  const cv = $('#scurb'); if (!cv) return;
+  const { g, w, h } = fit(cv, 26);
+  g.clearRect(0, 0, w, h);
+  if (!A || !A.waveform || !A.waveform.peaks.length) return;
+
+  if (!scrubBase || scrubKey !== A.id + '|' + w + 'x' + h) buildScrubLayers(w, h);
+
+  g.drawImage(scrubBase, 0, 0, w, h);
+  g.save();
+  g.beginPath(); g.rect(0, 0, prog * w, h); g.clip();
+  g.drawImage(scrubLit, 0, 0, w, h);
+  g.restore();
+
+  // 窗口框：频谱此刻在看哪一段。2 秒窗口下它只有全曲的 0.8% 宽 ——
+  // 很窄，但**看得见**，这正是"放大镜架在哪儿"该有的样子。
+  const dur = A.meta.duration || 1;
+  const { t0, len } = winRange(dur, prog);
+  const x0 = (t0 / dur) * w, x1 = ((t0 + len) / dur) * w;
+  g.fillStyle = 'rgba(244,230,255,.06)';
+  g.fillRect(x0, 0, x1 - x0, h);
+  g.strokeStyle = 'rgba(224,102,255,.55)'; g.lineWidth = 1;
+  g.strokeRect(x0 + .5, .5, Math.max(2, x1 - x0 - 1), h - 1);
+
+  // 播放头
+  g.fillStyle = ACCENT;
+  g.fillRect(prog * w - .75, 0, 1.5, h);
+}
+
+/* ── 频谱图 ──────────────────────────────────────────────────
+   2026-09-25 整个重写。旧版在屏幕上是**一坨没法看的东西**，三个原因叠在一起：
+
+     ① 后端当时给的是线性频率轴（0→11kHz 均分 170 格，每格 64.6Hz）。
+        音乐真正有内容的那一段（20–3000Hz）只占画面底下 27%，
+        上面 73% 画的是空气 —— 大部分歌 11kHz 以上根本没东西。
+        底鼓和贝斯全挤在最下面两行里。现在后端改成对数轴了。
+     ② 170 行塞进 188px 高的画布 = 每行 1.1 像素，代码还写了 `ch + .6` 的
+        重叠填充，相邻行互相盖掉。现在画布全宽 320px。
+     ③ 每一格一次 fillRect —— 12.8 万次调用。又慢又糊。
+
+   现在的做法：数据先在离屏 canvas 上按 (cols × rows) 逐像素写进 ImageData，
+   再交给浏览器 drawImage 缩放到画布。一次调用顶二十二万次 fillRect，
+   而且浏览器的双线性缩放比手写格子平滑得多。 */
+
+const SPEC_BG = [21, 10, 38];   // var(--panel)，静音格就用它，画出来等于隐形
+
+/* 色阶断点 —— 2026-10-18 按作者给的谱色阶重排：
+     底噪 / 低能量  → #1a0b2e（极暗深紫）
+     中低能量       → #4b0082（Indigo）
+     中高能量       → #b026ff → #e066ff（紫红 → 洋红）
+     峰值           → #f4e6ff（极浅淡紫，留一点白，爆音一眼可见）
+   ★ 断点不是均匀切的：实测归一化值中位数 0.245、90% 分位 0.624，
+     均匀切会把一半数据挤进同一档。中段（0.18–0.74）拉开得最狠。
+   ★ 起点就是面板底色，所以"没声音"= 完全看不见，而不是一块更黑的斑。 */
+const SPEC_RAMP = [
+  [0.00,  21,  10,  38],
+  [0.18,  26,  11,  46],
+  [0.34,  75,   0, 130],
+  [0.56, 120,  20, 190],
+  [0.74, 176,  38, 255],
+  [0.90, 224, 102, 255],
+  [1.00, 244, 230, 255],
+];
+
+/* 色阶打成 512 项的查表。22 万个格子逐个跑六段循环是 130 万次运算，
+   查表之后每格只剩一次数组索引。 */
+const SPEC_LUT = (() => {
+  const lut = new Uint8Array(512 * 3);
+  for (let i = 0; i < 512; i++){
+    const v = i / 511;
+    let r = 244, g = 230, b = 255;
+    for (let j = 1; j < SPEC_RAMP.length; j++){
+      const s = SPEC_RAMP[j];
+      if (v <= s[0]){
+        const p = SPEC_RAMP[j - 1];
+        const k = (v - p[0]) / (s[0] - p[0] || 1);
+        r = Math.round(p[1] + (s[1] - p[1]) * k);
+        g = Math.round(p[2] + (s[2] - p[2]) * k);
+        b = Math.round(p[3] + (s[3] - p[3]) * k);
+        break;
+      }
+    }
+    lut[i * 3] = r; lut[i * 3 + 1] = g; lut[i * 3 + 2] = b;
+  }
+  return lut;
+})();
+
+/* 上面那张表是按字节存的（每色 3 个 Uint8），画的时候要写 4 次。
+   这里再打一张 32 位的 — ImageData 的内存是 RGBA 顺序，小端机器上
+   按 Uint32 读出来就是 0xAABBGGRR，所以一个像素一次赋值就够。 */
+const SPEC_LUT32 = (() => {
+  const a = new Uint32Array(512);
+  for (let i = 0; i < 512; i++){
+    a[i] = (255 << 24) | (SPEC_LUT[i * 3 + 2] << 16) |
+           (SPEC_LUT[i * 3 + 1] << 8) | SPEC_LUT[i * 3];
+  }
+  return a;
+})();
+
+/* ★ 256 项的版本，直接按**字节值**索引。
+   后端的频谱数据现在一格存 1 个字节（见 analyze.py 的 encoding: 'u8b64'），
+   所以画热力图时不需要任何换算 —— 读出来就是查表下标。
+   量化步长 = 55dB / 255 = 0.216dB，比人耳能分的细得多。 */
+const SPEC_LUT256 = (() => {
+  const a = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) a[i] = SPEC_LUT32[Math.round(i * 511 / 255)];
+  return a;
+})();
+
+/* ── 频谱数据的解码 ─────────────────────────────────────────
+   后端有两种格式，前端两条路都得认（不可能一次把 111 首都重跑完）：
+
+     新：{encoding:'u8b64', data:'<base64>'}   每格 1 字节，0..255
+     老：{data:[0.123, 0.457, …]}              每格一个 0..1 的浮点
+
+   这里统一成 Uint8Array（0..255），下游只认这一种。
+   老格式那次转换是 24 万次乘法，只在第一次用的时候跑一遍，之后挂在
+   s._b 上复用 —— 播放中每帧都要读它，不能每帧重算。 */
+function specBytes(s){
+  if (s._b) return s._b;
+  let u;
+  if (s.encoding === 'u8b64' && typeof s.data === 'string'){
+    const bin = atob(s.data);
+    const n = bin.length;
+    u = new Uint8Array(n);
+    for (let i = 0; i < n; i++) u[i] = bin.charCodeAt(i);
+  } else {
+    const d = s.data, n = d.length;
+    u = new Uint8Array(n);
+    for (let i = 0; i < n; i++){
+      const v = (d[i] * 255 + 0.5) | 0;
+      u[i] = v < 0 ? 0 : v > 255 ? 255 : v;
+    }
+  }
+  s._b = u;
+  return u;
+}
+
+/* ── 频谱：一张全曲概览条 + 一个跟着播放滚动的窗口 ───────────
+   布局定死在这个形状：
+     概览条（全曲铺满，84px）→ 动态窗口（全宽，高度 = 频率行数）
+
+   概览条不是装饰品，它是**唯一**保留「一眼看全曲」的地方 ——
+   窗口里只有 8 秒，整首的结构（哪里副歌、哪里间奏）全在概览条上。
+   它同时是导航，还是「现在看的是哪一段」的指示器（见 drawSpecOver）。 */
+const SPEC_OV_H = 84;      // 概览条高度（CSS px）
+
+let SPEC_H = 466;          // 窗口高度（CSS px）。装载数据后按 rows 重算，见 drawSpec。
+/* 注：窗口秒数 `winSec` 的声明搬到了上面「全局时间窗」那一块（drawWave 之前）——
+   它现在是**整页**的状态了，不再只属于这一张图。 */
+/* ★ 2026-09-26 起 songLayer **只管概览条**了。
+   它建的是池化后的全曲图（s.cols × s.rows，约 5330×448），
+   主窗口改用切片（见下面 ensureChunk）。以前它一图两用，现在一图一用。 */
+let songLayer = null;
+let songKey = '';
+let specBox = null;        // 上一帧画出来的窗口几何，点击换算要用
+let noteKey = '';          // 表头小字的缓存 key
+
+/* ★★ 概览条源图：**按源分辨率**（cols × rows）建，交给 GPU 去缩放。
+
+   ★ 2026-09-26：这张图现在**只服务概览条**（主窗口改走切片，见 ensureChunk）。
+     它建的是后端**池化过**的数据（SPEC_OV_COLS，约 5330 列）——
+     概览条本来就是缩小显示，这个密度绰绰有余。
+     ⚠️ 主窗口绝不能吃这份数据：它是放大显示，8 秒窗口里一列占 10 个物理像素，
+        吃池化的等于把 4 个时间点并成 1 个，军鼓可能整下被跳过。
+
+   为什么不在显示分辨率上建？两个理由，一个关于清晰，一个关于速度。
+
+   清晰：整条链路只允许**一次**重采样，而且必须是最近邻（见下面那段）。
+   如果先在源分辨率上建、再 drawImage 放大，GPU 做的就是那唯一一次映射。
+   如果按显示尺寸逐像素写，那也是一次 —— 但窗口每帧都在动，
+   按显示尺寸写就得每帧重建（1830×604 = 110 万像素 × 60 帧 = 每秒 6600 万次），
+   根本跑不动。
+
+   速度：源图一首歌只建一次（Amie Blu 是 5331×448 = 239 万格），
+   之后每帧只剩一次 drawImage。**比原来还快** —— 原来 N 段各建一张
+   1830×604 的显示图（4 × 110 万 = 440 万格），比这一张还多。
+
+   ★ 频率轴翻转：后端的第 0 行是最低频，画布最底下才是低频，
+     所以写的时候把源行倒过来。翻转在这儿做一次，
+     后面每帧的 drawImage 就只管取矩形，不用再管方向。 */
+function buildSongLayer(){
+  const s = A.spectrum, cols = s.cols, rows = s.rows;
+  const off = document.createElement('canvas');
+  off.width = cols; off.height = rows;
+  const g = off.getContext('2d');
+  const img = g.createImageData(cols, rows);
+  // 32 位视图：一个像素一次读、一次写，而不是四次字节写。
+  const out = new Uint32Array(img.data.buffer);
+  // 不管后端给的是新格式还是老格式，这里拿到的都是 0..255 的字节。
+  const data = specBytes(s);
+  for (let y = 0; y < rows; y++){
+    const src = (rows - 1 - y) * cols, dst = y * cols;
+    for (let x = 0; x < cols; x++){
+      // 字节直接就是查表下标，不需要换算 —— Uint8Array 也保证了 0..255。
+      out[dst + x] = SPEC_LUT256[data[src + x]];
+    }
+  }
+  g.putImageData(img, 0, 0);
+  return off;
+}
+
+/* ── 频谱详情切片 ─────────────────────────────────────────────
+   ★ 为什么主窗口不能像别的图那样建一张"整曲源图"：
+
+     hop 从 1024 降到 256 之后，一首 4 分钟的歌从 5331 列变成 21322 列。
+     21322 × 448 的离屏 canvas **超过画布单维上限**（Safari/Chrome 一般 16384）——
+     不是慢，是 createImageData 直接失败。整曲源图这条路物理上死了。
+     （所以这不是"优化"，是"唯一能画出来的形状"。）
+
+   ★ 拆法：概览条吃池化数据，主窗口吃 32 秒切片。两边正好是相反的观看方式：
+       概览条**缩小**（5000 列 → 1900px，每列不到半像素）→ 池化无所谓
+       主窗口**放大**（一列占 10 个物理像素）    → 一列都不能并
+
+   ★ 为什么是 32 秒：前端最大窗口 16 秒，切片取它的两倍，一个窗口最多跨两片。
+     切片再小 → 换片太频繁；再大 → 白白多下用不到的部分。
+
+   ★ 加载是**隐式**的：不用谁去"通知"重画。rAF 循环本来就每帧调 drawSpec，
+     进到 drawSpec 一看这片没有就发请求，下一帧就到了。 */
+const chunkCache = new Map();   // "歌曲id|片号" → {canvas, cols}
+let chunkCols = 0;              // 每片多少列（s.detail.chunk_cols）
+let chunkCount = 0;             // 这首歌一共多少片（s.detail.chunks）
+/* drawSpec 最近一次画的时间进度（0..1）。
+   ★ 切片是异步到的，而 frame() **只在播放时画**（暂停就整个空转）——
+     所以切片到位之后没人会来重画，频谱就停在"空"上。
+     记着上次画的进度，切片落地时用它补一帧。 */
+let lastSpecProg = 0;
+
+function chunkKey(i){ return A.id + '|' + i; }
+
+/* 把一片原始字节（rows × cols，行优先，第 0 行是最低频）渲染成 canvas。
+   ★ 和概览条源图一样要**翻转频率轴** —— 画布最底下才是低频。
+     每片各翻各的，主窗口就能对着切片直接 drawImage，不用管方向。 */
+function makeChunkCanvas(u8, cols, rows){
+  const off = document.createElement('canvas');
+  off.width = cols; off.height = rows;
+  const gg = off.getContext('2d');
+  const img = gg.createImageData(cols, rows);
+  const out = new Uint32Array(img.data.buffer);
+  for (let y = 0; y < rows; y++){
+    const src = (rows - 1 - y) * cols, dst = y * cols;
+    for (let x = 0; x < cols; x++) out[dst + x] = SPEC_LUT256[u8[src + x]];
+  }
+  gg.putImageData(img, 0, 0);
+  return off;
+}
+
+/* 要第 i 片。已经在缓存里、或已经在下，就直接返回。
+   ★ 用 null 占位表示"正在下" —— 少了这个占位，rAF 每帧都会发一次请求，
+     一秒 60 个 GET 同一个文件，服务器日志和网络面板都会炸。 */
+function ensureChunk(i){
+  if (i < 0 || i >= chunkCount) return;
+  const k = chunkKey(i);
+  if (chunkCache.has(k)) return;
+  chunkCache.set(k, null);
+
+  const songId = A.id, rows = A.spectrum.rows;
+  const url = '/api/spec/' + encodeURIComponent(songId) + '/'
+            + String(i).padStart(3, '0') + '.bin';
+  fetch(url)
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+    .then(buf => {
+      const u8 = new Uint8Array(buf);
+      // ★ 列数从**字节数**反算，不信元数据。最后一片本来就不满员，
+      //   硬套 chunk_cols 会多画出一截根本不存在的列（黑边或者错位）。
+      const cols = Math.floor(u8.length / rows);
+      if (!(cols > 0)) throw new Error('空切片');
+      chunkCache.set(songId + '|' + i, { canvas: makeChunkCanvas(u8, cols, rows), cols });
+      // ★ 补一帧。frame() 只在播放时画，暂停时切片到了也没人重画 ——
+      //   不补的话窗口会一直空着，而且照样画着频率轴和播放头，
+      //   看着像"这首歌没数据"，其实数据刚到。
+      //   只在还是同一首歌时补：换歌了 A 已经指向别人，由换歌流程自己画。
+      if (A && A.id === songId) drawSpec(lastSpecProg);
+    })
+    .catch(e => {
+      // ★ 失败别钉在缓存里 —— 删掉占位，下一帧自然会重试。
+      //   留着 null 会变成"永远加载中"，安静地什么都不画。
+      chunkCache.delete(songId + '|' + i);
+      console.warn('频谱切片 ' + i + ' 取不到：', e.message);
+    });
+}
+
+/* 频率刻度只标这几个整数点 —— 对数轴上一格一个数字根本没法读。 */
+const SPEC_TICKS = [30, 50, 100, 200, 500, 1000, 2000, 5000, 10000];
+
+/* 第 i 行（从下往上数）对应的中心频率。
+   ★ 公式必须跟后端 `np.geomspace(SPEC_F_LO, nyq, SPEC_BINS + 1)` 一致，
+     否则刻度线会整体错位 —— 而且看不出错，只会觉得"标得有点怪"。 */
+function specFreqAt(i, rows, lo, hi, log){
+  return log ? lo * Math.pow(hi / lo, i / rows)
+             : lo + (hi - lo) * i / rows;
+}
+
+/* 后端还没重跑完的时候，磁盘上还是旧格式（没有 log/f_lo/f_hi）。
+   用 rows 和奈奎斯特频率反推一个线性轴，让页面在过渡期照样能看。 */
+function specAxis(){
+  const s = A.spectrum;
+  const log = !!s.log;
+  const lo = s.f_lo ?? 0;
+  const hi = s.f_hi ?? 11025;
+  return { log, lo, hi, rows: s.rows };
+}
+
+/* 频谱图和分轨图共用这套边距 —— 两块图上下叠着，时间轴必须能对齐，
+   眼睛才能竖着往下扫「这一秒频谱在干什么、哪条轨在响」。
+   ★ 概览条是唯一**不用**这套边距的：它没有频率刻度，整条铺满，
+     这样才能和下面的响度曲线共用同一条时间轴。 */
+const PLOT_LABEL_W = 46, PLOT_AXIS_H = 18;
+
+/* 时间刻度的步长：先想要几个刻度，再从"人看得懂的数"里挑一个够大的。 */
+function niceStep(span){
+  const raw = span / 5;
+  for (const s of [1, 2, 5, 10, 15, 30, 60, 120, 300, 600]) if (s >= raw) return s;
+  return 900;
+}
+
+/* 频率刻度 + 水平参考线。窗口每帧都在动，所以这两条轴也跟着每帧重画 ——
+   一共十来条线，比缓存省下的复杂度值。 */
+function drawFreqAxis(g, w, plotH, ax){
+  g.font = '9px ui-monospace, monospace';
+  g.textBaseline = 'middle';
+  g.textAlign = 'right';
+  g.lineWidth = 1;
+  for (const f of SPEC_TICKS){
+    if (f < ax.lo || f > ax.hi) continue;
+    const t = ax.log ? Math.log(f / ax.lo) / Math.log(ax.hi / ax.lo)
+                     : (f - ax.lo) / (ax.hi - ax.lo);
+    const y = Math.round(plotH * (1 - t)) + .5;
+    g.strokeStyle = 'rgba(244,230,255,.07)';
+    g.beginPath(); g.moveTo(PLOT_LABEL_W, y); g.lineTo(w, y); g.stroke();
+    g.fillStyle = DIM;
+    g.fillText(f >= 1000 ? (f / 1000) + 'k' : f, PLOT_LABEL_W - 8, y);
+  }
+}
+
+/* 时间刻度。★ 标的是**全局秒数**，不是"窗口内第几秒"。
+   窗口一直在滚，标相对秒数的话刻度会跟着一起动，读不出"这是曲子第几分钟"。 */
+function drawTimeAxis(g, w, plotW, plotH, t0, t1){
+  g.fillStyle = LINE;
+  g.fillRect(PLOT_LABEL_W, plotH, plotW, 1);
+  g.font = '9px ui-monospace, monospace';
+  g.textBaseline = 'top';
+  const span = Math.max(.001, t1 - t0);
+  const step = niceStep(span);
+  for (let t = Math.ceil(t0 / step) * step; t <= t1 + 1e-6; t += step){
+    const x = PLOT_LABEL_W + ((t - t0) / span) * plotW;
+    g.fillStyle = 'rgba(244,230,255,.10)';
+    g.fillRect(x, plotH, 1, 4);
+    g.fillStyle = DIM;
+    // 贴在两端的话改成左/右对齐，否则字有一半掉进边距里
+    g.textAlign = x < PLOT_LABEL_W + 14 ? 'left'
+                : x > PLOT_LABEL_W + plotW - 14 ? 'right' : 'center';
+    g.fillText(fmtTime(t), x, plotH + 6);
+  }
+}
+
+/* 表头那行小字。窗口时长是他自己选的，真正需要报出来的是**推算结果**：
+   每列代表多少毫秒、以及它实际占了多少个物理像素。
+   ★ 报的是**物理**像素 —— 报 CSS 像素的话，Retina 上读到的数只有实际的一半，
+     而这行字存在的全部意义就是让人能判断"格子够不够大"。 */
+function winNote(winCols, plotPhysW, fdur){
+  const el = $('#segnote'); if (!el) return;
+  const s = A && A.spectrum;
+  if (!s || !s.data || !A.meta.duration || !winCols){ el.textContent = ''; return; }
+  const cell = plotPhysW / winCols;
+  const k = s.cols + '|' + winCols + '|' + cell.toFixed(2) + '|' + fdur.toFixed(4);
+  if (k === noteKey) return;
+  noteKey = k;
+  el.textContent =
+    `每列 ${(fdur * 1000).toFixed(1)}ms · 每格 ${cell.toFixed(1)}px · 窗口 ${winSec}s`;
+}
+
+/* 全曲概览条：唯一保留「一眼看全曲」的地方，同时是导航。
+   ★ 它和下面的响度曲线共用同一条时间轴（都铺满全宽，没有左边距）。 */
+function drawSpecOver(prog){
+  const cv = $('#specov'); if (!cv) return;
+  const { g, w, h, dpr } = fit(cv, SPEC_OV_H);
+  g.clearRect(0, 0, w, h);
+  const s = A.spectrum;
+
+  // ★ 这里和主窗口**反着来**：开插值。
+  //   概览条是 5331 列压进 1896 个物理像素 —— 是**缩小**，每列只有 0.36 个像素。
+  //   缩小用最近邻就是直接扔列（每 3 列丢 2 列），一次军鼓可能整列被跳过，
+  //   概览条上那个音头就凭空消失了。平滑缩放不会。
+  //   ★ 同一个 drawImage，一条轴放大一条轴缩小，取的就是相反的策略 ——
+  //     "该不该插值"取决于缩放方向，不是取决于画的是不是频谱。
+  if (!songLayer) return;
+  g.imageSmoothingEnabled = true;
+  g.drawImage(songLayer, 0, 0, s.cols, s.rows, 0, 0, w, h);
+  g.imageSmoothingEnabled = false;
+
+  // 未播压暗。比再渲染一张暗图便宜得多 —— 一次 fillRect 就够。
+  if (prog < 1){
+    g.fillStyle = 'rgba(7,0,17,.66)';
+    g.fillRect(prog * w, 0, w * (1 - prog) + 2, h);
+  }
+
+  // 当前窗口盖住的那一段。窗口跟着播放头走，所以这条亮带也在跟着走 ——
+  // 它的作用是回答"我正在听的这 8 秒，在整首歌的什么位置"。
+  if (specBox){
+    // ★ specBox 里的 sx / winCols 是**详情坐标**（未池化），换算成概览条上的
+    //   位置要用详情列数，不是 s.cols（那是池化后的概览格子数）。差 4 倍 ——
+    //   用错的话这条亮带会缩在左边一小截，而且位置完全对不上播放头。
+    const cols = (s.detail && s.detail.cols) || s.cols;
+    const x0 = specBox.sx / cols * w;
+    const x1 = (specBox.sx + specBox.winCols) / cols * w;
+    g.fillStyle = 'rgba(224,102,255,.08)';
+    g.fillRect(x0, 0, x1 - x0, h);
+    g.fillStyle = 'rgba(224,102,255,.55)';
+    g.fillRect(x0, 0, 1, h);
+    g.fillRect(Math.max(x0, x1 - 1), 0, 1, h);
+    // 还没播到的部分压暗 —— 和主窗口里那条压暗是同一件事，两处保持一致
+    g.fillStyle = 'rgba(7,0,17,.55)';
+    g.fillRect(prog * w, 0, w * (1 - prog) + 2, h);
+  }
+
+  // 播放头
+  g.fillStyle = ACCENT;
+  g.fillRect(prog * w, 0, 1.5, h);
+}
+
+function drawSpec(prog = 0){
+  lastSpecProg = prog;
+  const s = A && A.spectrum;
+  if (!s || !s.data || !A.meta.duration) return;
+  const cv = $('#spec1'); if (!cv) return;
+
+  // ★ 画布高度 = 频率行数。这样 rows 行落到 rows × dpr 个物理像素上，
+  //   每行**恰好** dpr 个像素 —— dpr=2 时每行 2px，dpr=1 时每行 1px，
+  //   两种屏幕都是整数，不会出现"这行 1px、那行 2px"的锯齿格。
+  //   （以前写死 320：302 CSS × 2 = 604 物理 ÷ 448 行 = 每行 1.35px，必然对不齐。）
+  const H = s.rows + PLOT_AXIS_H;
+  if (H !== SPEC_H || cv.style.height !== H + 'px'){
+    SPEC_H = H; cv.style.height = H + 'px'; noteKey = '';
+  }
+
+  const { g, w, h, dpr } = fit(cv, SPEC_H);
+
+  // ★ 切片参数跟着数据走。chunk_cols 变了说明换了参数体系（或者换了歌），
+  //   缓存里的旧切片列数对不上，必须整批作废。
+  const det = s.detail;
+  const cc = (det && det.chunk_cols) || 0;
+  if (cc !== chunkCols){ chunkCols = cc; chunkCache.clear(); }
+  chunkCount = (det && det.chunks) || 0;
+
+  const key = A.id + '|' + s.cols + 'x' + s.rows;
+  if (!songLayer || songKey !== key){
+    songLayer = buildSongLayer(); songKey = key; noteKey = '';
+  }
+
+  const plotW = Math.max(20, w - PLOT_LABEL_W - 4);
+  const plotH = Math.max(20, h - PLOT_AXIS_H);
+
+  // ★★ 时间轴一律用**详情列数**（未池化）：
+  //     s.cols        = 概览条格子数（池化过，约 5330）
+  //     s.detail.cols = 整曲真实列数（21322）
+  //   两个都叫 cols，差 4 倍。用错了不会报错 —— 时间轴、窗口宽度、
+  //   播放头位置会一起偏 4 倍，看着像"跳转坏了"，其实只是拿错了数。
+  const dcols = (det && det.cols) || s.cols;
+  const fdur = A.meta.duration / dcols;                     // 每列多少秒
+
+  // ★★ 窗口边界一律走全局的 winRange，**不要在这里自己再算一遍**。
+  //    以前这里算的是"播放头所在列 − 窗口列数的一半"再取整列，
+  //    而别的图走 winRange 的"秒数居中" —— 两条公式差半个列宽，
+  //    实测 26 列 ≈ 0.3 秒。后果不是报错，是频谱的播放头和波形的播放头
+  //    **不在同一条垂线上**，越靠边差得越多，看着像数据坏了。
+  const { t0, len } = winRange(A.meta.duration, prog);
+  const winCols = Math.max(8, Math.min(dcols, len / fdur));
+  const sx = t0 / fdur;                     // 小数没关系：下面 drawImage 是最近邻
+
+  g.clearRect(0, 0, w, h);
+  // ★ 最近邻。频谱是**离散**数据 —— 一行一个频段、一列一个时间帧，
+  //   格子之间的过渡色在数据里根本不存在。插值只会把瞬态抹平、
+  //   把频段边界晕开，是**假**细节。硬边色块才是这份数据本来的样子，
+  //   Spek / Audacity 画出来同样是方块。
+  //   ★ 而且这里是**放大**（8 秒窗口时一列 ≈ 10 个物理像素），
+  //     放大用最近邻没有任何争议：每个源格原样铺开，一个像素都不丢。
+  g.imageSmoothingEnabled = false;
+  if (cc && chunkCount){
+    // ── 详情：从切片画。窗口最多跨两片（窗口最大 16 秒，一片 32 秒）。
+    //    ★ 逐片算它**落在窗口里的那一段**，换算成屏幕 x。
+    //      不用管"片比窗口大"还是"窗口跨两片"，这段数学两种情况都对。
+    const c0 = Math.floor(sx / chunkCols);
+    const c1 = Math.floor((sx + winCols - 1) / chunkCols);
+    for (let i = c0; i <= c1; i++){
+      const ck = chunkCache.get(chunkKey(i));
+      if (!ck){ ensureChunk(i); continue; }   // 还没到，这一帧先空着
+      const a = Math.max(sx, i * chunkCols);                  // 要的列区间（详情坐标）
+      const b = Math.min(sx + winCols, i * chunkCols + ck.cols);
+      if (b <= a) continue;
+      g.drawImage(ck.canvas,
+                  a - i * chunkCols, 0, b - a, s.rows,        // 源：片内偏移
+                  PLOT_LABEL_W + (a - sx) / winCols * plotW, 0,
+                  (b - a) / winCols * plotW, plotH);          // 目标：屏幕位置
+    }
+    // ★ 预取下一片。8 秒窗口滚过一片 32 秒的切片要好几秒，
+    //   等真滚到边界再下就是一次可见的空白。提前一片，永远赶得上。
+    //   （只预取一片，不是把整首都拉下来 —— 那样又回到"整曲加载"了。）
+    if (c1 + 1 < chunkCount) ensureChunk(c1 + 1);
+  } else {
+    // ★ 兜底：磁盘上还有没重跑到的旧数据（没有 detail 字段）。
+    //   那批歌的整曲源图是**未池化**的，直接按老路裁就行。
+    g.drawImage(songLayer, sx, 0, winCols, s.rows, PLOT_LABEL_W, 0, plotW, plotH);
+  }
+
+  // 两条轴跟着窗口每帧重画 —— 刻度数字一直在变，缓存不了。
+  drawFreqAxis(g, w, plotH, specAxis());
+  drawTimeAxis(g, w, plotW, plotH, sx * fdur, (sx + winCols) * fdur);
+
+  // 播放头。窗口居中跟着走，所以它平时钉在正中，只有贴到曲子头尾时才移动。
+  // 播放头位置：直接用**秒**算，跟窗口同一套坐标。
+  // ★ 别在这里重新引入 pc（播放头所在的源列）—— 窗口算法上面已经统一到
+  //   winRange 了，再混一套"列"的坐标进来就是两套基准，差半个列宽。
+  //   （删了 pc 却漏掉这一处，就是刚才那个 ReferenceError 的来源；
+  //     它还会把 redrawAll 打断，后面的响度和「此刻」跟着一起不画。）
+  const px = PLOT_LABEL_W + ((prog * A.meta.duration - t0) / len) * plotW;
+  g.fillStyle = 'rgba(7,0,17,.55)';
+  g.fillRect(px, 0, PLOT_LABEL_W + plotW + 2 - px, plotH);
+  g.fillStyle = ACCENT;
+  g.fillRect(px, 0, 1.5, plotH);
+
+  specBox = { plotW, winCols, sx };
+  winNote(winCols, plotW * dpr, fdur);
+  const wr = $('#winrange');
+  if (wr) wr.textContent = fmtTime(sx * fdur) + ' – ' + fmtTime((sx + winCols) * fdur);
+
+  drawSpecOver(prog);
+}
+
+/* 点哪儿跳哪儿。概览条 = 整首铺满；窗口 = 先把窗口内比例换算回全局秒数。 */
+function specSeek(cv, clientX){
+  if (!audio.duration || !A.meta.duration) return;
+  const r = cv.getBoundingClientRect();
+  if (cv.id === 'specov'){
+    const local = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+    audio.currentTime = local * A.meta.duration;
+    return;
+  }
+  if (!specBox) return;
+  const b = specBox;
+  const local = Math.min(1, Math.max(0, (clientX - r.left - PLOT_LABEL_W) / b.plotW));
+  // ★ 同上：specBox 是详情坐标，要除的是详情列数。这里用错的话点击跳转会偏 4 倍。
+  const dcols = (A.spectrum.detail && A.spectrum.detail.cols) || A.spectrum.cols;
+  audio.currentTime = Math.max(0, Math.min(A.meta.duration,
+    (b.sx + local * b.winCols) * (A.meta.duration / dcols)));
+}
+
+function bindSpecClicks(){
+  const cv = $('#spec1'); if (cv) cv.onclick = e => specSeek(cv, e.clientX);
+  const ov = $('#specov'); if (ov) ov.onclick = e => specSeek(ov, e.clientX);
+}
+bindSpecClicks();
+
+/* 改窗口 = 改**整页**的时间窗，不是只改频谱那一张。
+   ★ 必须主动补一帧：暂停时 frame() 是空转的，不补的话按了按钮屏幕上什么都不动。 */
+$('#winpick').onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  document.querySelectorAll('#winpick button')
+    .forEach(x => x.classList.toggle('on', x === b));
+  winSec = +b.dataset.s;
+  noteKey = '';
+  redrawAll();
+};
+
+/* ── 响度曲线 ────────────────────────────────────────────────
+   左边距用和频谱图同一个 PLOT_LABEL_W —— 两张图上下叠着，时间轴要对齐。 */
+
+/* 按时间在响度曲线上取值。曲线是**纯数组**，第 i 个点的时刻 = i × hop_sec。
+   ★ 2026-09-26：曲线从 {"t":..,"lufs":..} 的对象数组改成纯数组（体积省 78%）。
+   ★ 但更要紧的是这一条：**曲线的窗长是 400ms**（EBU R128 momentary 的定义），
+     不是 hop 的 100ms。它在时间轴上物理上就是 400ms 宽的 ——
+     插值只是在两个 400ms 的窗之间连线，不代表中间真有更细的东西。
+     所以下面的图会把这个 400ms 画成一根比例尺，不假装它更细。 */
+function lufsAt(c, t, hop){
+  if (!c || !c.length) return null;
+  const x = t / (hop || 0.1);
+  if (x <= 0) return c[0];
+  if (x >= c.length - 1) return c[c.length - 1];
+  const i = Math.floor(x);
+  return c[i] + (c[i + 1] - c[i]) * (x - i);
+}
+
+/* ── 响度曲线 ────────────────────────────────────────────────
+   ★ 2026-09-26：改成**窗口视图**。以前整曲铺满，两层缓存 + 裁剪叠加；
+   现在跟着全局时间窗走，每帧重算（曲线才 2400 个点，比建缓存便宜）。
+
+   两处和以前不一样的地方：
+     · 值域按**窗口内**的数据定 —— 按全曲定的话，放大后曲线会压成一条直线，
+       窗口里那点起伏全看不见。
+     · 右下角一根**比例尺**，宽度 = 400ms 的窗在现在这个窗口里占多少像素。
+       2 秒窗口里它横跨五分之一屏 —— 你一眼就知道这条曲线在那个尺度上
+       没有分辨力，不会把一条滑窗平均出来的平滑曲线当成细节。 */
+function drawLoud(prog = 0){
+  const cv = $('#loud'); if (!cv) return;
+  const { g, w, h } = fit(cv, 120);
+  g.clearRect(0, 0, w, h);
+  const L = A && A.loudness, c = L && L.curve;
+  if (!c || !c.length) return;
+
+  const hop = L.hop_sec || 0.1;
+  const winb = L.win_sec || 0.4;
+  const dur = A.meta.duration || 1;
+  const { t0, len } = winRange(dur, prog);
+
+  const labelW = PLOT_LABEL_W;
+  const plotW = Math.max(20, w - labelW - 4);
+
+  const j0 = Math.max(0, Math.floor(t0 / hop));
+  const j1 = Math.min(c.length - 1, Math.ceil((t0 + len) / hop));
+  let lo = Infinity, hi = -Infinity;
+  for (let i = j0; i <= j1; i++){ if (c[i] < lo) lo = c[i]; if (c[i] > hi) hi = c[i]; }
+  if (!(hi > lo)) hi = lo + 1;
+  const pad = Math.max(0.5, (hi - lo) * 0.18);
+  lo -= pad; hi += pad;
+
+  const X = t => labelW + ((t - t0) / len) * plotW;
+  const Y = v => h - ((v - lo) / (hi - lo)) * (h - 30) - 15;
+
+  g.strokeStyle = 'rgba(244,230,255,.045)'; g.lineWidth = 1;
+  for (let i = 0; i <= 4; i++){
+    const y = 15 + (h - 30) * i / 4;
+    g.beginPath(); g.moveTo(labelW, y); g.lineTo(w, y); g.stroke();
+  }
+
+  const trace = () => {
+    g.beginPath();
+    for (let i = j0; i <= j1; i++){
+      const x = X(i * hop), y = Y(c[i]);
+      i === j0 ? g.moveTo(x, y) : g.lineTo(x, y);
+    }
+    g.stroke();
+  };
+
+  g.strokeStyle = 'rgba(224,102,255,.40)'; g.lineWidth = 1.4; trace();
+
+  const tNow = prog * dur;
+  if (tNow > t0){
+    g.save();
+    g.beginPath(); g.rect(labelW, 0, Math.min(plotW, X(tNow) - labelW), h); g.clip();
+    g.strokeStyle = ACCENT; g.lineWidth = 1.8; trace();
+    g.restore();
+  }
+  if (tNow >= t0 && tNow <= t0 + len){
+    g.fillStyle = ACCENT; g.fillRect(X(tNow), 0, 1.5, h);
+  }
+
+  g.font = '9px ui-monospace, monospace';
+  g.fillStyle = DIM;
+  g.textAlign = 'right'; g.textBaseline = 'middle';
+  g.fillText(hi.toFixed(0), labelW - 8, Y(hi));
+  g.fillText(lo.toFixed(0), labelW - 8, Y(lo));
+  g.textAlign = 'left'; g.textBaseline = 'top';
+  g.fillText('LUFS', labelW + 6, 3);
+
+  // 比例尺：400ms 的窗此刻有多宽
+  const bandPx = Math.min((winb / len) * plotW, plotW);
+  const by = h - 8, bx = w - 10 - bandPx;
+  g.strokeStyle = 'rgba(195,176,224,.55)'; g.lineWidth = 1;
+  g.beginPath();
+  g.moveTo(bx, by - 4); g.lineTo(bx, by + 2);
+  g.moveTo(bx + bandPx, by - 4); g.lineTo(bx + bandPx, by + 2);
+  g.moveTo(bx, by); g.lineTo(bx + bandPx, by);
+  g.stroke();
+  g.fillStyle = DIM;
+  g.textAlign = 'right'; g.textBaseline = 'bottom';
+  g.fillText('窗 400ms', bx - 6, by + 3);
+  g.textBaseline = 'alphabetic';   // 画布状态不复位会安静地画错后面的东西
+}
+
+/* ── 频带 ──────────────────────────────────────────────────── */
+const BAND_LABEL = {
+  sub: '超低', low: '低频', mid: '中频', high_mid: '中高', high: '高频',
+};
+
+function drawBands(){
+  const b = A.spectrum.bands; if (!b) return;
+  $('#bands').innerHTML = b.map(x => `
+    <div class="band">
+      <span class="nm">${BAND_LABEL[x.name] || x.name}</span>
+      <span class="bar"><span class="fil" style="width:${(x.share*100).toFixed(1)}%"></span></span>
+      <span class="pc">${(x.share*100).toFixed(1)}%</span>
+    </div>`).join('');
+  $('#bandnote').textContent = b.map(x => `${x.lo}–${x.hi}Hz`).join(' · ');
+}
+
+/* ══ 此刻 ═══════════════════════════════════════════════════════
+   这是整个页面的题眼 —— 作者原话：
+     「我构想的是实时推进的数据，比如钢琴在这时入场了，就用数据呈现出来，
+       且是动态的」
+
+   两种数据，来路完全不同，视觉上也必须分开：
+     · 频谱重心、当前频段构成 —— **现算的**。播放头走到哪一列，就读哪一列的
+       448 个格子，当场加权求和。不是预存的数字。
+     · 正在响的轨、最近事件 —— 来自分轨，是**模型的猜测**。
+       所以那两格用的是冷色（--cold）和洋红的区分。
+
+   ★ 为什么每帧现算不心疼：448 次乘加，一帧之内连噪声都算不上。
+     真正贵的是频谱图那几百万个像素 —— 那个才需要离屏缓存。 */
+
+/* 把后端的量化值（1 字节，0..255）反算回线性幅度。
+   ★ 地板值必须从数据里读（s.db_floor），不能写死 —— 写死的话后端一调显示下限，
+     这里会安安静静地算出错误的数，而且看起来"有值"，根本发现不了。
+   后端：q = clip((dB + floor) / floor, 0, 1)   →   dB = q * floor - floor
+   前端：q = byte / 255
+
+   ★ 打成 256 项的幅值表。播放中每帧要算重心和频段构成，那是
+     448 行 × 2 次 Math.pow —— 查表之后一次除法都不用。 */
+function ampAt(s, b){
+  if (!s._amp){
+    const a = new Float32Array(256);
+    for (let i = 0; i < 256; i++){
+      a[i] = Math.pow(10, ((i / 255) * s.db_floor - s.db_floor) / 20);
+    }
+    s._amp = a;
+  }
+  return s._amp[b];
+}
+
+/* 频谱重心（spectral centroid）= 频谱的「重心」在哪。
+   每个频率按自己的能量加权求平均。数高 = 声音偏亮（镲片、齿音、气声），
+   数低 = 偏闷（贝斯、底鼓、闷在被子里的）。混音里判断亮不亮就看这个。 */
+function colCentroid(c){
+  const s = A.spectrum, ax = specAxis(), D = specBytes(s);
+  let num = 0, den = 0;
+  for (let i = 0; i < s.rows; i++){
+    const b = D[i * s.cols + c];
+    if (b <= 0) continue;
+    const amp = ampAt(s, b);
+    num += specFreqAt(i, s.rows, ax.lo, ax.hi, ax.log) * amp;
+    den += amp;
+  }
+  return den > 0 ? num / den : 0;
+}
+
+/* 当前这一列里，五个频段各自占多少。跟后端 drawBands 用的分法同一套。 */
+function colBands(c){
+  const s = A.spectrum, ax = specAxis(), bs = s.bands, D = specBytes(s);
+  if (!bs) return null;
+  const acc = bs.map(() => 0);
+  for (let i = 0; i < s.rows; i++){
+    const b = D[i * s.cols + c];
+    if (b <= 0) continue;
+    const f = specFreqAt(i, s.rows, ax.lo, ax.hi, ax.log);
+    const amp = ampAt(s, b);
+    for (let k = 0; k < bs.length; k++){
+      if (f >= bs[k].lo && f < bs[k].hi){ acc[k] += amp; break; }
+    }
+  }
+  const tot = acc.reduce((a, b) => a + b, 0);
+  if (!tot) return null;
+  let best = 0;
+  for (let k = 1; k < acc.length; k++) if (acc[k] > acc[best]) best = k;
+  return { share: acc.map(v => v / tot), top: bs[best], topShare: acc[best] / tot };
+}
+
+const fmtHz = f => f >= 1000 ? (f / 1000).toFixed(2) + 'k' : String(Math.round(f));
+
+/* 分轨曲线是每 50ms 一个点。取播放头所在的那一格。 */
+function stemAt(tr, t){
+  const s = S.stems;
+  const i = Math.floor(t / (s.frame_ms / 1000));
+  if (i < 0 || i >= tr.curve.length) return 0;
+  return tr.curve[i];
+}
+
+let lastNowT = -1;          // 上一帧的播放头位置，用来判断"刚刚越过了哪个事件"
+let lastEvents = [];        // 最近触发的进出点，带触发时刻
+let pendingT = null;        // ?t= 要跳到的位置，等音频元数据到了再落
+
+function drawNow(t){
+  if (!A || !A.spectrum || !A.spectrum.data) return;
+  const dur = A.meta.duration || 1;
+  const cols = A.spectrum.cols;
+  const idx = Math.max(0, Math.min(cols - 1, Math.floor((t / dur) * cols)));
+
+  // 时间要带十分位 —— 秒级精度根本看不出"此刻"在哪
+  const m = Math.floor(t / 60), sec = t % 60;
+  $('#nTime').textContent = m + ':' + (sec < 10 ? '0' : '') + sec.toFixed(1);
+
+  const l = lufsAt(A.loudness.curve, t, A.loudness.hop_sec);
+  $('#nLufs').innerHTML = l == null ? '—'
+    : l.toFixed(1) + '<small>LUFS</small>';
+
+  const cen = colCentroid(idx);
+  $('#nCent').innerHTML = cen
+    ? fmtHz(cen) + '<small>Hz</small>' : '—';
+
+  const cb = colBands(idx);
+  $('#nBand').innerHTML = cb
+    ? `${BAND_LABEL[cb.top.name] || cb.top.name}<small>${(cb.topShare*100).toFixed(0)}%</small>`
+    : '—';
+
+  // ── 分轨部分（有才显示）──
+  const cell = $('#nStemCell');
+  if (!S){
+    cell.style.display = 'none';
+    return;
+  }
+  cell.style.display = '';
+  const on = S.stems.tracks.filter(tr => stemAt(tr, t) > 0.42);
+  // 分隔符不带空格 —— 六个轨名全响时要多占十来个字符，
+  // 撑到省略号就白瞎了这个格子。紧排刚好放得下。
+  $('#nStem').textContent = on.length ? on.map(tr => tr.label).join('·') : '（静）';
+
+  // ── 刚刚越过了哪个进出点 ──
+  // ★ 只在正常往前播的时候收集。拖进度条会一帧跨过几十秒，
+  //   那时候该清空，而不是一口气刷出二十条。
+  const dt = lastNowT >= 0 ? t - lastNowT : 0;
+  if (dt > 0 && dt < 1){
+    for (const tr of S.stems.tracks){
+      for (const ev of (tr.events || [])){
+        if (ev.t > lastNowT && ev.t <= t){
+          lastEvents.push({ label: tr.label, type: ev.type, t: ev.t,
+                            stamp: performance.now(), seek: t });
+        }
+      }
+    }
+    lastEvents = lastEvents.slice(-4);
+  } else if (dt >= 1){
+    lastEvents = [];          // 跳了 → 清空
+  }
+  lastNowT = t;
+
+  // 三秒内的才算「刚刚」。过了就淡出，不然会一直挂在那儿不动。
+  const el = $('#evline');
+  const fresh = lastEvents.filter(e => performance.now() - e.stamp < 3000);
+  el.classList.toggle('on', fresh.length > 0);
+  if (fresh.length){
+    el.innerHTML = fresh.slice(-2).map(e =>
+      `<span class="ev"><b>${e.label}</b>${e.type === 'enter' ? '入场' : '退场'}` +
+      `<i>${e.t.toFixed(1)}s</i></span>`).join('');
+  }
+}
+
+/* ── 指标卡 ────────────────────────────────────────────────── */
+function metric(k, v, unit, note, est){
+  return `<div class="metric${est ? ' est' : ''}">
+    <div class="k">${k}</div>
+    <div class="v">${v}<small>${unit || ''}</small></div>
+    ${note ? `<div class="n">${note}</div>` : ''}
+  </div>`;
+}
+
+function drawMetrics(){
+  const m = A.meta, L = A.loudness, T = A.tempo, K = A.key;
+
+  $('#metrics').innerHTML =
+    metric('整体响度', L.integrated_lufs ?? '—', 'LUFS',
+           '流媒体标准 −14。数值越低越轻', false) +
+    metric('样本峰值', L.sample_peak_db ?? '—', 'dB',
+           '到 0 dB 就削波', false) +
+    metric('响度范围', L.lra_lu, 'LU',
+           '最响与最轻之差，衡量动态', false) +
+    metric('立体声相关度', A.stereo.correlation, '',
+           A.stereo.correlation > .99 ? '基本是单声道' : '1.0 = 单声道，0 = 完全独立', false) +
+    metric('采样率', (m.sample_rate / 1000).toFixed(1), 'kHz',
+           `${m.channels} 声道 · ${m.subtype}`, false) +
+    metric('时长', fmtTime(m.duration), '',
+           (m.size_bytes / 1048576).toFixed(1) + ' MB', false);
+
+  $('#metrics2').innerHTML =
+    metric('速度', T.bpm, 'BPM', 'librosa 拍点追踪推断', true) +
+    metric('调性', K ? K.label : '—', '',
+           K ? `相关度 ${K.correlation} · 置信度 ${K.confidence}` : '', true) +
+    (K ? K.candidates.filter((c, i) => i > 0).slice(0, 3).map(c =>
+        metric('候选', c.label, '', '相关度 ' + c.corr, true)).join('') : '');
+}
+
+/* ═══ 分轨：谁在什么时候响 ═══════════════════════════════════
+   ★ 这一块的数据是两层的，别搞混：
+       「这是钢琴轨」        —— htdemucs_6s 分的，**猜的**
+       「这条轨第 47.8 秒有能量」—— 对分离结果算的，**算的**
+     分离本身错了，后面的能量就是错的。所以整块标 estimated。
+
+   ★ 性能：整曲铺满的时代这里是预渲染两层离屏、每帧两次 drawImage
+     （6×1100 个矩形 ×60fps = 每秒 40 万次 fillRect，直接画必卡）。
+     2026-09-26 改成窗口视图之后不这么干了 —— 窗口里只有 6×160 列，
+     而且窗口每帧都在滑，缓存每一帧都失效，建缓存比直接画还贵。
+   ═══════════════════════════════════════════════════════════ */
+let S = null;
+
+// 曲线从 dB 线性映射来：curve = (rel_db + 60) / 60。反着算回去。
+const curveToDb = v => (v <= 0.004 ? null : v * 60 - 60);
+
+function _layer(w, h, dpr){
+  const c = document.createElement('canvas');
+  c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+  const g = c.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return [c, g];
+}
+
+/* ★ 2026-09-26：改成**窗口视图**。
+
+   以前是整曲铺满 + 两层离屏缓存（灰一层、亮一层），每帧只做两次 drawImage ——
+   因为整曲有 6 轨 × 1100 列，每帧重画必卡（注释里写的就是这事）。
+   现在窗口里只有 6 × 160 列（8 秒窗口），**直接画比建缓存还便宜**；
+   而且窗口每帧都在滑，缓存每一帧都失效，留着纯粹是负担。
+
+   桶数跟波形同一套逻辑：放大时不超过帧数（多了就是空桶），
+   缩小时按 ~3 CSS 像素一桶。 */
+function drawStemBands(g, w, h, t0, len, prog, dur){
+  const T = S.stems.tracks;
+  const labelW = 46, axisH = 18;
+  const plotW = Math.max(20, w - labelW - 4);
+  const rowH = (h - axisH) / T.length;
+  const padY = 5, bandH = rowH - padY * 2;
+  const frameSec = (S.stems.frame_ms || 50) / 1000;
+
+  const frames = Math.max(1, Math.round(len / frameSec));
+  const cols = Math.max(1, Math.min(frames, Math.round(plotW / 3)));
+  const colW = plotW / cols;
+  const barW = Math.max(1, colW * 0.82);
+
+  const tNow = prog * dur;
+  const xNow = labelW + ((tNow - t0) / len) * plotW;
+
+  T.forEach((t, i) => {
+    const top = i * rowH + padY, base = top + bandH;
+    g.fillStyle = 'rgba(244,230,255,.018)';
+    g.fillRect(labelW, top, plotW, bandH);
+
+    // 每列取该时间范围内的**最大值**，不是平均 ——
+    // 取平均会把鼓点这种瞬态抹平。跟波形峰值降采样同一个道理。
+    const n = t.curve.length;
+    const a0 = (t0 / dur) * n, a1 = ((t0 + len) / dur) * n;
+    for (let x = 0; x < cols; x++){
+      const i0 = Math.floor(a0 + (a1 - a0) * x / cols);
+      const i1 = Math.max(i0 + 1, Math.floor(a0 + (a1 - a0) * (x + 1) / cols));
+      let v = 0;
+      for (let k = i0; k < i1 && k < n; k++) if (t.curve[k] > v) v = t.curve[k];
+      if (v <= 0.012) continue;
+      const bh = Math.max(1, v * bandH);
+      const px = labelW + x * colW;
+      // 一趟画完，颜色按"这一列的右缘过没过播放头"决定 ——
+      // 分两趟跑等于把整个循环抄一遍，白花一倍时间。
+      g.fillStyle = (px + barW <= xNow)
+        ? 'rgba(224,102,255,'  + (0.25 + v * 0.75).toFixed(3) + ')'
+        : 'rgba(195,176,224,' + (0.08 + v * 0.32).toFixed(3) + ')';
+      g.fillRect(px, base - bh, barW, bh);
+    }
+
+    g.fillStyle = TXT2;
+    g.font = '10px ui-monospace, monospace';
+    g.textAlign = 'right'; g.textBaseline = 'alphabetic';
+    g.fillText(t.label, labelW - 8, top + bandH / 2 + 3.5);
+    g.textAlign = 'left';
+  });
+
+  // 时间轴：窗口内的刻度。步长挑一个让整条轴上落 4–8 个刻度的值。
+  g.fillStyle = DIM;
+  g.font = '10px ui-monospace, monospace';
+  const step = [0.5, 1, 2, 5, 10, 30].find(s => len / s <= 8) || 30;
+  for (let t = Math.ceil(t0 / step) * step; t <= t0 + len; t += step){
+    const x = labelW + ((t - t0) / len) * plotW;
+    g.fillRect(x, h - axisH, 1, 3);
+    g.fillText(fmtTime(t), x + 3, h - 5);
+  }
+
+  // 播放头
+  if (tNow >= t0 && tNow <= t0 + len){
+    g.fillStyle = 'rgba(244,230,255,.85)';
+    g.fillRect(xNow, 0, 1, h);
+  }
+}
+
+function drawStems(prog = 0){
+  const cv = $('#stems');
+  if (!cv || !S) return;
+  const { g, w, h } = fit(cv, 252);
+  g.clearRect(0, 0, w, h);
+  // 窗口按**音频**时长算，不按 S.stems.duration —— curve 的索引也按它换算。
+  // 两份数据的 duration 理应一样，但万一差一点，用同一个基准才不会整体错位。
+  const dur = (A && A.meta.duration) || S.stems.duration || 1;
+  const { t0, len } = winRange(dur, prog);
+  drawStemBands(g, w, h, t0, len, prog, dur);
+}
+
+function buildLive(){
+  const T = S ? S.stems.tracks : P.shape.tracks;
+  $('#live').innerHTML = T.map(t => `
+    <div class="live-row">
+      <span class="nm">${t.label}</span>
+      <span class="tr"><span class="fl"></span></span>
+      <span class="ctr">—</span>
+      <span class="dcy">—</span>
+      <span class="db">—</span>
+    </div>`).join('');
+}
+
+function drawLive(tNow){
+  if (!S && !P) return;
+  const T = S ? S.stems.tracks : P.shape.tracks;
+  const frameSec = S ? S.stems.frame_ms / 1000 : 0.05;
+  const rows = document.querySelectorAll('.live-row');
+  T.forEach((t, i) => {
+    const row = rows[i]; if (!row) return;
+
+    // 电平条只有分轨数据才有（那是 Demucs 分完之后算的）
+    let v = 0;
+    if (S){
+      const idx = Math.min(t.curve.length - 1, Math.max(0, Math.round(tNow / frameSec)));
+      v = t.curve[idx] || 0;
+    }
+    row.querySelector('.fl').style.width = (v * 100).toFixed(1) + '%';
+    const db = S ? curveToDb(v) : null;
+    row.querySelector('.db').textContent = db === null ? '—' : db.toFixed(1) + ' dB';
+    // 0.42 ≈ −35dB，跟后端的进场阈值对齐 —— 前端亮起的那一刻就是判定入场那一刻
+    row.classList.toggle('on', v > 0.42);
+
+    // 声学画像两列：此刻这个声部的质心和衰减。
+    // 按 name 查找而不是按下标 —— 两份文件各由不同脚本生成，
+    // 顺序一致只是巧合，不该依赖。
+    const pr = P ? P.shape.tracks.find(x => x.name === t.name) : null;
+    const pf = pr ? planeAt(pr, tNow) : null;
+    row.querySelector('.ctr').textContent =
+      (pf && pf.centroid != null) ? fmtHz(pf.centroid) : '—';
+    row.querySelector('.dcy').textContent =
+      (pf && pf.decay != null) ? pf.decay.toFixed(1) + ' dB' : '—';
+  });
+}
+
+/* ═══ 声学画像：这个声部是什么性质 ═══════════════════════════════
+   ★ 这一块和上面「谁在什么时候响」的数据来路**完全不同**，别混：
+
+       「谁」在什么时候响 —— 「谁」是 Demucs 分出来的轨，**猜的**（estimated）
+       这里                 —— 质心/衰减/过零率全是**对信号本身直接算的**（measured）
+
+     对一段 wav 做 STFT，然后算频谱重心、过零点比例、起音之后的下降量 ——
+     这是数学，不是推断。它回答「这一段声音听起来什么性质」，
+     不回答「这是什么乐器」。后者 Demucs 拿不准（官方自己说钢琴轨
+     not working great），前者我能算准。所以这张图不标乐器名。
+
+   ★ 为什么用「质心 × 衰减」这两根轴：
+     37 首实测下来，质心是最干净的一个量 —— 六条轨排成一条单调阶梯
+     （贝斯 77Hz < 钢琴 239 < 吉他 341 < 其他 534 < 鼓 919 < 人声 1125），
+     跨曲稳定。衰减只有「鼓 vs 非鼓」那一刀稳（33/37 首鼓掉得最快），
+     但它正是「一击即散 / 按住不变」这条轴，是这张图上唯一有物理分界的维度。
+
+   ★ 落点淡影 = 整首歌的分布。点和淡影重叠 = 此刻就是它的常态；
+     点飘到没影子的地方 = 这一段的性质跟往常不一样（Demucs 漏了东西进来时
+     就会这样，因为漏进来的东西不属于这条轨的常态）。
+   ═══════════════════════════════════════════════════════════════ */
+let P = null;
+let planeBase = null, planeFoot = null, planeKey = '';
+
+/* ★ 六个声部的固定顺序。不跟着文件里存的顺序走 ——
+   两份文件的顺序本来就不一样（stems 是 other/vocals/bass/piano/drums/guitar，
+   shape 是 vocals/drums/bass/guitar/piano/other），而且**每首歌还各不相同**。
+   那样每换一首歌，六个声部的颜色和上下位置就重新洗一遍，用的人根本没法形成记忆。
+   统一钉死成 Demucs 的原始顺序。 */
+const TRACK_ORDER = ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'];
+const byOrder = (a, b) => TRACK_ORDER.indexOf(a.name) - TRACK_ORDER.indexOf(b.name);
+
+// 六个声部的颜色。2026-10-18 全站换紫后，六轨也收进同一个色族：
+// 靠冷暖偏（洋红 → 紫 → 蓝紫）和明度分开。人声最亮最暖，other 最灰。
+const STEM_COLOR = {
+  vocals: '#e066ff', drums: '#ff5f86', bass: '#7e5cff',
+  guitar: '#b026ff', piano:  '#9db4ff', other: '#8a7fa8',
+};
+
+const rgba = (hex, a) => {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`;
+};
+
+/* 平面映射。横轴取对数 —— 人耳本来就是按对数听频率的，
+   线性轴会把 50Hz 到 8kHz 里 99% 的内容全挤在左边一小条。
+   纵轴线性，**向上 = 衰减快**（一击即散在上，按住不变在下）。
+
+   ★ 纵轴上限 45dB 不是随便定的：那是后端 GATE_DB ——「低于本轨峰值 45dB
+     就算没声音」的门限。所以 45 这个位置的含义是**「掉到听不见了」**，
+     是全图的物理天花板，再往上没有意义（实测不夹的话会冒出 236dB 的假值）。
+     取满 45 不切任何数据；代价是点的中位数只落在 15% 高度 ——
+     这没错，大多数声音的衰减本来就是小的。 */
+const F_LO = 50, F_HI = 8000, D_LO = 0, D_HI = 45;
+const PAD = { l: 46, r: 18, t: 22, b: 34 };
+
+function planeMap(w, h){
+  const pw = Math.max(10, w - PAD.l - PAD.r);
+  const ph = Math.max(10, h - PAD.t - PAD.b);
+  const lg = Math.log(F_HI / F_LO);
+  return {
+    pw, ph,
+    x: f => PAD.l + pw * Math.log(Math.min(F_HI, Math.max(F_LO, f)) / F_LO) / lg,
+    y: d => PAD.t + ph * (1 - Math.min(1, Math.max(0, (d - D_LO) / (D_HI - D_LO)))),
+  };
+}
+
+/* 取某一时刻的画像值。窗口是每 0.5 秒一个，直接取最近一格的话点会一顿一顿跳，
+   所以在相邻两格之间插值。
+   ★ 质心必须在**对数域**插值 —— 800Hz 和 1600Hz 的中间是 1130Hz 不是 1200Hz，
+     线性插出来的位置会跟坐标轴对不上。 */
+function planeAt(tr, t){
+  const W = tr.windows;
+  if (!W || !W.length) return null;
+  const hop = P.shape.hop_sec || 0.5;
+  const f = Math.max(0, t) / hop;
+  const i = Math.min(W.length - 1, Math.floor(f));
+  const j = Math.min(W.length - 1, i + 1);
+  const k = Math.min(1, Math.max(0, f - i));
+  const a = W[i], b = W[j];
+  const mix = key => {
+    const va = a[key], vb = b[key];
+    if (va == null) return vb ?? null;
+    if (vb == null) return va;
+    return va + (vb - va) * k;
+  };
+  const ca = a.centroid, cb = b.centroid;
+  const cen = (ca == null) ? (cb ?? null)
+            : (cb == null) ? ca
+            : Math.exp(Math.log(ca) + (Math.log(cb) - Math.log(ca)) * k);
+  return { centroid: cen, decay: mix('decay'), zcr: mix('zcr'),
+           active: mix('active'), rms_db: mix('rms_db') };
+}
+
+function paintPlaneBase(g, w, h){
+  const m = planeMap(w, h);
+  g.clearRect(0, 0, w, h);
+
+  // 分区底色。极淡，只给眼睛两个地标：左边闷、右边亮。
+  const x250 = m.x(250), x2k = m.x(2000);
+  g.fillStyle = 'rgba(126,92,255,.05)';
+  g.fillRect(PAD.l, PAD.t, Math.max(0, x250 - PAD.l), m.ph);
+  g.fillStyle = 'rgba(157,180,255,.05)';
+  g.fillRect(x2k, PAD.t, Math.max(0, PAD.l + m.pw - x2k), m.ph);
+
+  g.strokeStyle = 'rgba(244,230,255,.055)';
+  g.lineWidth = 1;
+  for (const f of [100, 250, 500, 1000, 2000, 4000]){
+    const x = Math.round(m.x(f)) + .5;
+    g.beginPath(); g.moveTo(x, PAD.t); g.lineTo(x, PAD.t + m.ph); g.stroke();
+  }
+  for (let d = D_LO; d <= D_HI; d += 15){
+    const y = Math.round(m.y(d)) + .5;
+    g.beginPath(); g.moveTo(PAD.l, y); g.lineTo(PAD.l + m.pw, y); g.stroke();
+  }
+  g.strokeStyle = 'rgba(244,230,255,.11)';
+  g.strokeRect(PAD.l + .5, PAD.t + .5, m.pw - 1, m.ph - 1);
+
+  g.fillStyle = DIM;
+  g.font = '10px ui-monospace, monospace';
+  g.textAlign = 'center';
+  for (const f of [100, 1000, 4000]) g.fillText(fmtHz(f), m.x(f), h - PAD.b + 16);
+  g.textAlign = 'right';
+  for (let d = D_LO; d <= D_HI; d += 15) g.fillText(String(d), PAD.l - 8, m.y(d) + 3.5);
+
+  // ★ textAlign 是**画布状态**，不是 fillText 的参数 ——
+  //   上面画纵轴刻度时设成了 'right'，这里不复位的话，轴名会右对齐到
+  //   x = PAD.l 的位置、整句往左溢出画布，屏幕上只剩尾巴几个字。
+  //   （这个坑不会报错，只会安安静静地画错。）
+  g.fillStyle = TXT2;
+  g.textAlign = 'left';
+  g.fillText('衰减 dB ↑（顶 = 掉到听不见）', PAD.l, PAD.t - 8);
+  g.textAlign = 'right';
+  g.fillText('谱质心 →', PAD.l + m.pw, PAD.t - 8);
+  g.textAlign = 'left';
+}
+
+/* 整首歌的落点分布。用 lighter 混合（加色）—— 落在同一处的点会叠加变亮，
+   一个声部老待在哪儿，那里就会自己浮出来一块。
+   这条轨是不是「一直待在右下角」，一眼就看出来了。 */
+function paintPlaneFootprint(g, w, h){
+  const m = planeMap(w, h);
+  g.globalCompositeOperation = 'lighter';
+  for (const tr of P.shape.tracks){
+    const c = STEM_COLOR[tr.name] || '#8a7fa8';
+    for (const win of tr.windows){
+      if (win.centroid == null || win.decay == null) continue;
+      g.fillStyle = rgba(c, 0.05 + Math.min(.075, (win.active || 0) * .075));
+      g.fillRect(Math.round(m.x(win.centroid)) - 1.5,
+                 Math.round(m.y(win.decay)) - 1.5, 3, 3);
+    }
+  }
+  g.globalCompositeOperation = 'source-over';
+}
+
+function buildPlaneLayers(w, h){
+  const dpr = window.devicePixelRatio || 1;
+  planeKey = P.id + '|' + w + 'x' + h;
+  const [cb, gb] = _layer(w, h, dpr); paintPlaneBase(gb, w, h); planeBase = cb;
+  const [cf, gf] = _layer(w, h, dpr); paintPlaneFootprint(gf, w, h); planeFoot = cf;
+}
+
+function buildPlaneLegend(){
+  $('#planelegend').innerHTML = P.shape.tracks.map(t =>
+    `<span class="lg"><i class="sw" style="background:${
+      STEM_COLOR[t.name] || '#8a7fa8'}"></i>${t.label}</span>`).join('');
+  $('#planenote').textContent =
+    '质心、衰减都是对信号直接算的（STFT 之后的数学量，无模型参与）· '
+    + '质心低 = 闷，高 = 亮 · 衰减大 = 按下去就掉，小 = 按住不变 · '
+    + '空心圈 = 在响但一个起音都测不到（持续型）· '
+    // ★ 淡影里没有无起音的窗口 —— 那些窗口根本没有纵轴坐标，
+    //   硬塞进底部会在 0dB 处造出一条假的热线。所以「足迹」是一个
+    //   「有起音的那些时刻都落在哪」的分布，不是全部时刻。
+    + '淡影是整首歌里有起音的落点分布 —— 点压在影子上 = 此刻就是它的常态';
+}
+
+function drawPlane(t){
+  const cv = $('#plane');
+  if (!cv || !P) return;
+  const { g, w, h } = fit(cv, 300);
+  // ★ key 带 P.id —— 换歌时尺寸没变但数据变了，不带 id 就会画成上一首
+  if (!planeBase || planeKey !== P.id + '|' + w + 'x' + h) buildPlaneLayers(w, h);
+
+  g.clearRect(0, 0, w, h);
+  g.drawImage(planeBase, 0, 0, w, h);
+  g.drawImage(planeFoot, 0, 0, w, h);
+
+  const m = planeMap(w, h);
+  const hop = P.shape.hop_sec || 0.5;
+
+  /* ★ 2026-09-26：跟全局时间窗联动。
+     这张图的横轴**不是时间**（是谱质心），所以"画窗口内的内容"对它不是一回事 ——
+     它该画的是**窗口那几秒落在平面的哪儿**，叠在整曲足迹上面。
+     三层从淡到亮：整曲足迹（底面）→ 时间窗内的落点（这一层）→ 此刻的拖尾（下面）。
+
+     窗口切到 2 秒时这一层只剩四五个点，看着稀 —— 那是实话：
+     每 0.5 秒一个窗口，两秒里本来就只有四个。不补点、不插值。 */
+  const pDur = (A && A.meta.duration) || 0;
+  if (pDur){
+    const { t0, t1 } = winRange(pDur, Math.max(0, Math.min(1, t / pDur)));
+    g.globalCompositeOperation = 'lighter';
+    for (const tr of P.shape.tracks){
+      const c = STEM_COLOR[tr.name] || '#8a7fa8';
+      for (const win of tr.windows){
+        if (win.centroid == null || win.decay == null) continue;
+        if (win.t < t0 || win.t > t1) continue;
+        g.fillStyle = rgba(c, 0.16 + Math.min(.22, (win.active || 0) * .22));
+        g.fillRect(Math.round(m.x(win.centroid)) - 2,
+                   Math.round(m.y(win.decay)) - 2, 4, 4);
+      }
+    }
+    g.globalCompositeOperation = 'source-over';
+  }
+
+  for (const tr of P.shape.tracks){
+    const c = STEM_COLOR[tr.name] || '#8a7fa8';
+
+    // 点的亮度用分轨那条 50ms 曲线的当前值 —— 跟上面那张能量带同源，
+    // 两块图不会出现"上面说它在响、下面的点却是暗的"这种自相矛盾。
+    let amp = .5;
+    if (S){
+      const st = S.stems.tracks.find(x => x.name === tr.name);
+      if (st){
+        const idx = Math.min(st.curve.length - 1,
+                             Math.max(0, Math.round(t / (S.stems.frame_ms / 1000))));
+        amp = st.curve[idx] || 0;
+      }
+    }
+    const lum = Math.min(1, amp / 0.6);
+
+    // 拖尾：往回 1.75 秒的轨迹，越近越亮。拖动进度条时它会整条跟着换地方。
+    g.lineWidth = 1.4; g.lineCap = 'round';
+    for (let s = 4; s > 0; s--){
+      const p0 = planeAt(tr, t - s * hop * .7);
+      const p1 = planeAt(tr, t - (s - 1) * hop * .7);
+      if (!p0 || !p1 || p0.centroid == null || p1.centroid == null ||
+          p0.decay == null || p1.decay == null) continue;
+      g.strokeStyle = rgba(c, (.03 + .085 * (5 - s) / 5) * (amp > .2 ? 1 : .3));
+      g.beginPath();
+      g.moveTo(m.x(p0.centroid), m.y(p0.decay));
+      g.lineTo(m.x(p1.centroid), m.y(p1.decay));
+      g.stroke();
+    }
+
+    const p = planeAt(tr, t);
+    if (!p || p.centroid == null) continue;   // 连质心都没有 = 这两秒是真的没声音
+    const x = m.x(p.centroid);
+    const r = 3.2 + lum * 5.2;
+
+    /* ★ 空心圈 =「这一段它在响，但一个起音都测不到」。
+       占所有有声窗口的 33% —— 钢琴轨更是 50%。画不画是个大是大非：
+       直接跳过的话，有三分之一的时间图上什么都不显示，看着像「这个声部死了」，
+       而它恰恰是**持续型**的直接证据，是这张图最想说的东西之一。
+       落在纵轴最底下是因为「测不到起音」和「按住不变」在听感上本就是同一件事。 */
+    if (p.decay == null){
+      const y = m.y(D_LO) - 8;
+      // 空心圈要比实心点画得大才读得出来 —— 同样半径下，一圈 1.6px 的描边
+      // 在密集的淡影上几乎看不见，会被当成"没画"。
+      const rn = r * 1.15;
+      g.strokeStyle = rgba(c, .38 + lum * .55);
+      g.lineWidth = 1.7;
+      g.beginPath(); g.arc(x, y, rn, 0, 6.2832); g.stroke();
+      if (amp > .42){
+        g.strokeStyle = rgba(c, .22);
+        g.lineWidth = 1;
+        g.beginPath(); g.arc(x, y, rn + 4.5, 0, 6.2832); g.stroke();
+      }
+      continue;
+    }
+
+    const y = m.y(p.decay);
+
+    // 先垫一个背景色的底再填色 —— 不然点落在密集的淡影上会被吞掉，
+    // 安静的时候（lum≈0）更是只剩一团模糊。垫底让它在任何背景下都读得出来。
+    g.fillStyle = 'rgba(7,0,17,.82)';
+    g.beginPath(); g.arc(x, y, r + 2.4, 0, 6.2832); g.fill();
+    g.fillStyle = rgba(c, .34 + lum * .66);
+    g.beginPath(); g.arc(x, y, r, 0, 6.2832); g.fill();
+
+    // 响了就套一圈光环 —— 跟「正在响」的判定同一个阈值（0.42 ≈ −35dB）——
+    // 前端亮起的那一刻，就是后端判定它入场的时刻。
+    if (amp > .42){
+      g.strokeStyle = rgba(c, .5);
+      g.lineWidth = 1;
+      g.beginPath(); g.arc(x, y, r + 4, 0, 6.2832); g.stroke();
+    }
+  }
+}
+
+function buildSegs(){
+  const T = S.stems.tracks;
+  const th = S.stems.thresholds;
+  $('#segs').innerHTML = T.map(t => `
+    <div class="segs-row">
+      <span class="nm">${t.label}</span>
+      <span class="bar"><i style="width:${(t.active_ratio * 100).toFixed(1)}%"></i></span>
+      <span class="ct">${(t.active_ratio * 100).toFixed(0)}% · ${t.segments}段 · ${t.peak_db}dB</span>
+    </div>`).join('');
+  $('#stemnote').textContent =
+    `${T.length} 轨 · ${S.stems.model} · 每帧 ${S.stems.frame_ms}ms · `
+    + `进场 ${th.enter_db}dB / 离场 ${th.exit_db}dB（两个阈值=迟滞防抖）· `
+    + `所有轨共用同一参考电平，所以图上矮 = 真的轻，不是没归一化好`;
+  $('#livenote').textContent =
+    '播放时随进度跳动 · 后两列是此刻的谱质心和音符级衰减';
+}
+
+/* ── 走带 ──────────────────────────────────────────────────── */
+/* ★ t 不给才读 audio.currentTime。
+   ?t= 深链接和"拖过进度条再换歌"时必须把位置传进来 ——
+   那一刻 audio 的 seek 还没落地（异步，快慢看解码），
+   读 audio.currentTime 会得到 0，结果是**图都画在第 30 秒、时间却写 0:00**。
+   总时长同理，优先用 audio.duration，没加载完就退回分析数据里的时长。 */
+function drawTransport(t){
+  const dur = audio.duration || (A && A.meta.duration) || 0;
+  const tt = (t != null) ? t : (audio.currentTime || 0);
+  const p = dur ? Math.max(0, Math.min(1, tt / dur)) : 0;
+  drawScrub(p);
+  $('#tcur').textContent = fmtTime(tt);
+}
+
+/* ── 主渲染 ────────────────────────────────────────────────── */
+function render(){
+  if (!A){ return; }
+  $('#emptymsg').style.display = 'none';
+  $('#analysis').style.display = 'block';
+
+  $('#title').textContent = A.id;
+  $('#sub').textContent = A.meta.format + ' · ' + (A.meta.subtype || '') +
+                          ' · ' + fmtTime(A.meta.duration);
+  $('#chips').innerHTML = [
+    ['采样率', (A.meta.sample_rate/1000).toFixed(1) + ' kHz'],
+    ['声道', A.meta.channels],
+    ['分析用时', A.elapsed_sec + ' s'],
+    ['分析时间', A.analyzed_at],
+  ].map(([k, v]) => `<span class="chip">${k} <b>${v}</b></span>`).join('');
+
+  $('#fmeta').textContent = '分析于 ' + A.analyzed_at;
+  $('#tdur').textContent = fmtTime(A.meta.duration);
+
+  // ★ 换歌必须把所有离屏缓存作废。它们的 key 里都带了 A.id，其实自己会重建 ——
+  //   但显式清一遍能省掉"万一某个 key 忘了带 id"这类幽灵 bug（今天已经栽过一次：
+  //   换歌尺寸没变，缓存不重建，安安静静画出上一首的图）。
+  //   （波形和响度现在是每帧重算的窗口视图，没有层缓存要作废了。）
+  // ★ 频谱现在是一张概览源图 + 一组详情切片，换歌两样都要扔 ——
+  //   key 里带了 A.id 本来就会重建，显式清是为了不依赖那个隐式约定。
+  songLayer = null; songKey = ''; specBox = null; noteKey = '';
+  // ★ 切片缓存必须清。key 带了 A.id 不会串歌，但不清就一直攒着 ——
+  //   一首 8 片 × 1.2MB ≈ 9.4MB，来回翻十几首就是上百 MB 常驻内存。
+  chunkCache.clear();
+  // 注：波形、响度、分轨现在都是每帧重算的窗口视图，没有离屏缓存要作废了。
+  //     （还留着层缓存的只剩两处：进度条 — 内容是全曲的不随播放变，
+  //       和声学画像 — 底面是静态的。）
+  scrubBase = scrubLit = null;
+  planeBase = planeFoot = null; planeKey = '';
+  lastNowT = -1; lastEvents = [];
+  $('#evline').classList.remove('on');
+
+  // ★ 首屏画在哪一刻：
+  //   ?t= 指定了位置就画那个位置 —— 加载时我们就知道该画哪儿，没有理由等
+  //   音频元素的 seek 落地（那是异步的，快慢取决于解码和缓冲）。
+  //   否则用音频的真实当前时间，让"拖过进度条再换歌"也能接上。
+  //   写死 0 的话，?t= 深链接会永远停在开头。
+  const t0 = pendingT != null ? pendingT
+           : (isFinite(audio.currentTime) ? audio.currentTime : 0);
+
+  // ★ 分轨有两份数据，各自独立：stems（谁在响，猜的）和 shape（什么性质，算的）。
+  //   少哪份就少画哪块，不编。两份都没有才整块不显示。
+  //   ⚠️ 显隐必须排在 redrawAll **前面** —— 隐藏的 canvas clientWidth 是 0，
+  //      先画的话会按 0 宽建图，显示出来就是一片空白。
+  if (S || P){
+    $('#stemsec').style.display = 'block';
+    // 三块各自独立：能量带和分段表要 stems，画像要 shape。
+    // 缺哪份藏哪块 —— 摆一块空图在那儿比不显示更糟。
+    $('#stembox').style.display = S ? '' : 'none';
+    $('#segs').style.display = S ? '' : 'none';
+    $('#planebox').style.display = P ? '' : 'none';
+  }
+  drawBands(); drawMetrics();
+  // ★ 位置用首屏那一刻（?t= 指定的或拖过来的），不能写死 0 ——
+  //   否则会出现"结构图的播放头在 1:15，底下的实时电平却在报开头的值"，
+  //   两块数据自相矛盾，而且看起来都"有数"，不会觉得是坏的。
+  redrawAll(t0);
+}
+
+/* ══ 重画一瞬间 ══════════════════════════════════════════════════
+   把当前这一瞬间的每一张图重画一遍。
+
+   ★ 2026-09-26：抽成一个函数。以前这段代码在文件里抄了**三份**
+     （frame 一份、onseeked 一份、resize 一份），
+     每加一张图要改三个地方，改漏一处就是"按了按钮屏幕上没反应"。
+
+   ★ 也是在这一版治掉的老毛病：`frame()` 原来是
+     `if (!audio.paused && audio.duration){ …全部绘制… }` —— **暂停时整个函数空转**。
+     而切片是异步 fetch 回来的：加载完是暂停状态，第一帧画的时候切片还没到，
+     **切片到了，没有任何人会重画**。窗口就一直空着，
+     而且照样画着频率轴和播放头 —— 看着像"这首歌没有数据"。
+
+   参数 t 不给就用音频的真实当前时间；换歌首屏要画在 ?t= 指定的位置，
+   那种情况下传进来。 */
+function redrawAll(t){
+  if (!A) return;
+  const dur = audio.duration || A.meta.duration || 0;
+  const tt = (t != null) ? t : (audio.currentTime || 0);
+  const p = dur ? Math.max(0, Math.min(1, tt / dur)) : 0;
+
+  // ★ 每张图单独兜住异常。一张图出错**不该**让后面几张一起空白 ——
+  //   刚才就栽过：drawSpec 里一个 ReferenceError，把响度、分轨、「此刻」
+  //   全部连坐，屏幕上一整片空白，**看不出坏的是哪张图**。
+  //   这里不吞错误（catch 里打到 console），只是不让它扩散出去。
+  const safe = (fn, arg) => {
+    try { fn(arg); } catch (e) { console.error('[绘图] ' + fn.name + ' 失败：', e); }
+  };
+  safe(drawTransport, tt);
+  safe(drawWave, p);
+  safe(drawSpec, p);
+  safe(drawLoud, p);
+  safe(drawNow, tt);
+  if (S) safe(drawStems, p);
+  if (S || P){ safe(drawLive, tt); if (P) safe(drawPlane, tt); }
+}
+
+/* ── 事件 ──────────────────────────────────────────────────── */
+$('#play').onclick = () => audio.paused ? audio.play() : audio.pause();
+audio.onplay  = () => { $('#play').textContent = '❚❚'; setStatus('播放中', true); };
+audio.onpause = () => { $('#play').textContent = '▶';  setStatus('暂停', false); };
+audio.onended = () => { $('#play').textContent = '▶';  setStatus('就绪', false); };
+
+// ★ timeupdate 事件一秒才来 4 次，用它驱动进度条会一格一格跳。
+//   用 requestAnimationFrame 每帧驱动 —— 这是浏览器里做动画的正确入口。
+function frame(){
+  if (!audio.paused && audio.duration) redrawAll();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* ★ 暂停状态下跳转（拖进度条 / ?t= 深链接），所有跟播放头走的东西都得重画一遍。
+   frame() 只在播放时跑，所以这里必须单独接一下 —— 少画哪个，哪个就会停在
+   上一次的位置不动，而且看着"有图有数"，根本不像坏了。
+   今天已经栽过一次：只调了 drawNow，结果「此刻」的读数是新的、频谱图的
+   播放头还杵在 0:00。 */
+audio.onseeked = () => redrawAll();
+
+audio.onloadedmetadata = () => {
+  $('#tdur').textContent = fmtTime(audio.duration);
+  // ?t=83.5：链接直接落到某一秒。配合 ?id= 就是一个"这一秒在这儿"的地址。
+  // ★ 这里只负责把位置跳过去。**重画不能只靠 onseeked 或这一句** ——
+  //   两个事件和分析数据的到达顺序是不定的，谁先谁后都可能。
+  //   统一的收口在 render()：它最后总是按当前真实位置重画一遍。
+  if (pendingT != null){
+    audio.currentTime = Math.max(0, Math.min(pendingT, audio.duration - .05));
+    pendingT = null;
+  }
+};
+$('#vol').oninput = e => audio.volume = +e.target.value;
+
+$('#scrub').onclick = e => {
+  if (!audio.duration) return;
+  const r = e.currentTarget.getBoundingClientRect();
+  audio.currentTime = ((e.clientX - r.left) / r.width) * audio.duration;
+};
+$('#wavebox').onclick = e => {
+  if (!audio.duration) return;
+  const r = e.currentTarget.getBoundingClientRect();
+  audio.currentTime = ((e.clientX - r.left) / r.width) * audio.duration;
+};
+
+let rt;
+window.addEventListener('resize', () => {
+  clearTimeout(rt);
+  rt = setTimeout(() => {
+    if (!A) return;
+    // 尺寸变了，还留着离屏层的两处（进度条、声学画像）要重建。
+    // key 里带了 w×h，本来就会自己失效 —— 显式清掉是为了不依赖那个隐式约定。
+    // 波形/响度/分轨现在每帧重算，没有层可作废。
+    // 源图本身也不用重建（源分辨率跟窗口无关），只作废窗口几何和表头小字。
+    scrubBase = scrubLit = null;
+    planeBase = planeFoot = null;
+    specBox = null; noteKey = '';
+    redrawAll();
+  }, 140);
+});
+
+/* ── 加载 ──────────────────────────────────────────────────── */
+/* 喂歌流水线的状态（/api/pipeline，pipeline.py 写）。
+   两种等待都靠它：
+     1. 刚丢进 media/ 的歌，波形还没算完 —— analysis.json 还是 404，等它出现
+     2. 分轨还没跑完 —— 页面已经能听，等 .stems.json 出来再把那一层长上去
+   期间界面上不给假的进度条，只说实话：还在算。 */
+let PIPE = { items: {} };
+let waitTimer = null;
+
+function stageOf(id){
+  const s = (PIPE.items || {})[id];
+  return s ? (s.stage || '') : '';
+}
+
+function stageDot(id){
+  const st = stageOf(id);
+  if (!st || st === 'done' || st === 'wave_done') return '';
+  return `<span class="st ${st === 'error' ? 'err' : 'busy'}" title="${st}"></span>`;
+}
+
+function refreshShelfDots(){
+  document.querySelectorAll('#shelf .item').forEach(el => {
+    el.querySelector('.st')?.remove();
+    const d = stageDot(el.dataset.id);
+    const rt = el.querySelector('.rt');
+    if (d && rt) rt.insertAdjacentHTML('beforebegin', d);
+  });
+}
+
+async function fetchPipe(){
+  try { PIPE = await (await fetch('/api/pipeline', {cache:'no-store'})).json(); }
+  catch { PIPE = { items: {} }; }
+  return PIPE;
+}
+
+/* 等一首歌从「刚丢进去」到「能看」。 */
+function watchSong(item){
+  clearInterval(waitTimer);
+  let n = 0;
+  waitTimer = setInterval(async () => {
+    if (++n > 400) { clearInterval(waitTimer); return; }   // 20 分钟封顶
+    await fetchPipe();
+    refreshShelfDots();
+    if (stageOf(item.id) === 'error') { setStatus('分析失败', false); clearInterval(waitTimer); return; }
+    const r = await fetch('/api/analysis/' + encodeURIComponent(item.id), {cache:'no-store'});
+    if (r.ok) { clearInterval(waitTimer); pick(item); }
+  }, 3000);
+}
+
+/* 等分轨补齐：页面已经能听，只是这一层还没出来。 */
+function watchStems(item){
+  clearInterval(waitTimer);
+  let n = 0;
+  waitTimer = setInterval(async () => {
+    if (++n > 400) { clearInterval(waitTimer); return; }
+    await fetchPipe();
+    refreshShelfDots();
+    if (stageOf(item.id) !== 'done') return;
+    clearInterval(waitTimer);
+    try {
+      const r = await fetch('/api/analysis/' + encodeURIComponent(item.id) + '.stems', {cache:'no-store'});
+      if (!r.ok) return;
+      S = await r.json();
+      S.stems.tracks.sort(byOrder);
+      buildSegs(); buildLive(); render();
+    } catch {}
+  }, 4000);
+}
+
+async function pick(item){
+  clearInterval(waitTimer);
+  document.querySelectorAll('.item').forEach(el =>
+    el.classList.toggle('on', el.dataset.id === item.id));
+  setStatus('分析中…', true);
+  try {
+    const r = await fetch('/api/analysis/' + item.id);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    A = await r.json();
+    audio.src = '/media/' + encodeURIComponent(item.file);
+
+    // 分轨是另一份文件。没跑过分离的歌就没有这份数据 ——
+    // 那就整块不显示。不编数据，库里有几个显示几个。
+    S = null;
+    try {
+      const r2 = await fetch('/api/analysis/'
+                             + encodeURIComponent(item.id) + '.stems');
+      if (r2.ok) S = await r2.json();
+    } catch {}
+    // 声学画像是第三份文件，同样是独立的 —— 没有就整块不显示。
+    P = null;
+    try {
+      const r3 = await fetch('/api/analysis/'
+                             + encodeURIComponent(item.id) + '.shape');
+      if (r3.ok) P = await r3.json();
+    } catch {}
+    /* ★ 两份数据的轨顺序**不一样**：
+         stems（analyze_stems.py）—— other / vocals / bass / piano / drums / guitar
+         shape（analyze_shape.py）—— vocals / drums / bass / guitar / piano / other
+       不统一的话，「实时电平」的行和声学画像的图例就对不上号 ——
+       六个声部配六种颜色，顺序一乱就是"鼓画成绿的、吉他画成红的"，
+       比不给颜色更糟，而且看起来完全正常，不会觉得是坏的。
+       以 stems 的顺序为准（它上面那张能量带也按这个序画）。 */
+    if (S) S.stems.tracks.sort(byOrder);
+    if (P) P.shape.tracks.sort(byOrder);
+    if (S) buildSegs();
+    if (S || P) buildLive();
+    if (P) buildPlaneLegend();
+
+    if (!S) watchStems(item);      // 分轨还没好 —— 先听，后面自己补上
+
+    render();
+    setStatus('就绪', false);
+  } catch (e){
+    // 404 = 这首歌刚丢进 media/，波形还在算。说实话，然后等。
+    A = null;
+    setStatus('分析中…', true);
+    watchSong(item);
+    console.error(e);
+  }
+}
+
+async function boot(){
+  try {
+    const r = await fetch('/api/library');
+    lib = (await r.json()).shelf || [];
+  } catch { lib = []; }
+
+  if (!lib.length){ setStatus('曲库为空', false); return; }
+  $('#emptymsg').style.display = 'none';
+
+  await fetchPipe();               // 谁在算、算到哪了
+
+  $('#shelf').innerHTML = lib.map((x, i) => `
+    <div class="item" data-id="${x.id}">
+      <span class="idx">${String(i+1).padStart(2,'0')}</span>
+      <span class="ttl">${x.title || x.id}</span>
+      <span class="rt">${x.artist || ''}</span>
+    </div>`).join('');
+  refreshShelfDots();
+
+  document.querySelectorAll('.item').forEach(el =>
+    el.onclick = () => pick(lib.find(x => x.id === el.dataset.id)));
+
+  // ?id=xxx 直接定位某一首、?t=83.5 直接落到某一秒。
+  // 刷新页面不会掉回"还没选歌"，也能把某一首的某一刻直接发出去。
+  // 选不中就退回第一首。
+  const q = new URLSearchParams(location.search);
+  const want = q.get('id');
+  const wt = parseFloat(q.get('t'));
+  pendingT = isFinite(wt) ? wt : null;
+  pick(lib.find(x => x.id === want) || lib[0]);
+}
+
+boot();
+</script>
+</body>
+</html>

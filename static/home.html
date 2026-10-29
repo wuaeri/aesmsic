@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MusicLab · 把一首歌翻过来看</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════
+   MusicLab · 进入页
+   ───────────────────────────────────────────────────────────────
+   视觉世界**直接继承播放器**（深色 + 琥珀 + 等宽数字），不另起一套 ——
+   这两页是同一台仪器的门和面板，换个皮肤就成了两个产品。
+
+   设计立场跟播放器是同一条（写在 index.html 顶部）：
+   这是录音棚里的仪器，不是音乐 App。
+
+   ⚠️ 这一页不画任何**编出来的**东西。下面每一张缩略图都是当前那首歌
+      真实的分析数据画出来的，它崩了就是空白，不会退化成一张好看的假图。
+   ═══════════════════════════════════════════════════════════════ */
+:root{
+  --bg:#0b0b0c; --panel:#131315; --panel-2:#191921;
+  --line:#232329; --line-soft:#1a1a1f;
+  /* ★ --dim 的第二次抬升：3.0:1 → #7a7a85(4.64:1) → #83838e(4.89:1)。
+     第二次是 2026-09-27 门卡片逼出来的 —— 门卡的底是 --panel #131315，
+     比页面底 #0b0b0c 亮，同一个灰在上面只剩 4.4:1。**对比度是跟背景配的，
+     不是跟"这个灰看起来够不够灰"配的。** 压在仪器风上很容易默认灰就该这么灰，
+     但读不清的灰不是风格，是缺陷。 */
+  --txt:#e9e9ec; --txt-2:#9a9aa5; --dim:#83838e;
+  --amber:#ffa42b; --amber-dim:#7a4f14; --cold:#4ac6d2;
+  /* ★ 影视区的色。2026-09-27 放映厅并进来时定的规矩：**框架统一、色调各留。**
+     框架（字体/字号/圆角/间距/微反馈时长/浏览器界面）两个区是同一双手；
+     颜色各留 —— 仪器是暖的，影院是冷的。 */
+  --film:#8fd6b8;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth; scrollbar-color:#26262e #0b0b0c; scrollbar-width:thin}
+body{
+  background:var(--bg); color:var(--txt);
+  font:15px/1.62 -apple-system, "SF Pro Text", "PingFang SC", system-ui, sans-serif;
+  -webkit-font-smoothing:antialiased; overflow-x:hidden;
+}
+
+/* ── 浏览器自己的东西也归设计管 ────────────────────────────────
+   选区、滚动条、焦点环、下划线偏移 —— 这些的默认值不属于任何设计系统。
+   把它们从配色里长出来，是一页"做过的"和"拼起来的"之间最便宜的分界线。 */
+::selection{background:rgba(255,164,43,.30); color:#fff}
+::-webkit-scrollbar{width:12px; height:12px}
+::-webkit-scrollbar-track{background:#0b0b0c}
+::-webkit-scrollbar-thumb{background:#26262e; border-radius:6px; border:3px solid #0b0b0c}
+::-webkit-scrollbar-thumb:hover{background:#3a3a45}
+:focus-visible{outline:2px solid var(--amber); outline-offset:3px; border-radius:2px}
+a{color:inherit; text-decoration:none}
+a:hover{text-decoration:underline; text-underline-offset:3px}
+
+/* ── 顶栏 ─────────────────────────────────────────────────── */
+.top{
+  display:flex; align-items:center; gap:14px;
+  /* 上下留 9px、用 min-height 而不是写死 height —— 带下边框的行里
+     文字贴着那条线，是"没排过版"最明显的信号之一。 */
+  padding:9px 26px; min-height:54px;
+  border-bottom:1px solid var(--line-soft);
+  position:sticky; top:0; z-index:20;
+  background:rgba(11,11,12,.88);
+  -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);
+}
+.brand{
+  font-family:var(--mono); font-size:13px; letter-spacing:.15em;
+  text-transform:uppercase;
+}
+.brand b{color:var(--amber); font-weight:600}
+.top .spacer{flex:1}
+.live{
+  font-family:var(--mono); font-size:12px; color:var(--dim);
+  display:flex; align-items:center; gap:7px; letter-spacing:.04em;
+}
+/* ★ 静态的点，没有脉冲。
+   "本地运行"是一个**不变的事实**，不是活数据 —— 给一个固定状态配脉冲动画，
+   是在假装它一直在变。脉冲留给真正随时间变化的东西（播放器里那个播放指示才有）。 */
+.pulse{width:6px; height:6px; border-radius:50%; background:var(--amber)}
+
+main{max-width:1180px; margin:0 auto; padding:0 26px}
+
+/* ══ 第一屏 ══════════════════════════════════════════════════════
+   这一屏是**论题**，不是页眉。它必须当场演示这台机器在做什么 ——
+   所以屏幕下半截直接摊开一首真歌的全曲频谱：把声音摊平，就是这产品本身。
+   左上是它是什么，右上是往哪走，底下那一条是证据。 */
+.hero{padding:64px 0 0}
+.hero-grid{
+  display:grid; grid-template-columns:minmax(0,1fr) auto;
+  gap:40px; align-items:end;
+}
+h1{
+  font-size:clamp(38px, 6.2vw, 74px);
+  font-weight:600; letter-spacing:-.035em; line-height:1.02;
+}
+h1 em{font-style:normal; color:var(--amber)}
+.lede{
+  max-width:42ch; color:var(--txt-2); font-size:15px; line-height:1.7;
+  padding-bottom:6px;
+}
+.lede b{color:var(--txt); font-weight:500}
+
+.cta-row{display:flex; gap:12px; flex-wrap:wrap; margin-top:30px}
+.cta{
+  font-family:var(--mono); font-size:13px; letter-spacing:.05em;
+  padding:11px 20px; border:1px solid var(--amber); border-radius:4px;
+  background:rgba(255,164,43,.09); color:var(--amber);
+  transition:background 140ms ease-out, transform 120ms ease-out, color 140ms ease-out;
+}
+.cta:hover{background:var(--amber); color:#141008; text-decoration:none}
+/* 按下的反馈必须在 100ms 内、幅度要克制 —— 0.9 会像在抖 */
+.cta:active{transform:scale(.97); transition-duration:60ms}
+.cta.ghost{
+  border-color:var(--line); background:transparent; color:var(--txt-2);
+}
+.cta.ghost:hover{background:#1b1b22; color:var(--txt); border-color:#33333d}
+
+/* ══ 两扇门 ══════════════════════════════════════════════════════
+   音乐 / 影视各一扇，**对等** —— 不是"主入口 + 一个链接"。
+   两扇门里放的都是真数据（曲数、片数），不是写死的文案。 */
+.doors{display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:34px}
+.door{
+  display:block; padding:24px 26px 22px;
+  border:1px solid var(--line); border-radius:5px; background:var(--panel);
+  transition:background 140ms ease-out, border-color 140ms ease-out, transform 140ms ease-out;
+}
+.door:hover{background:#17171c; text-decoration:none; transform:translateY(-2px)}
+.door:active{transform:none; transition-duration:60ms}
+.door .k{font-family:var(--mono); font-size:11px; letter-spacing:.18em; color:var(--dim); margin-bottom:13px}
+/* 用 h2 不用 h3 —— 门是页面的一级分节，h1 直接跳 h3 会断掉文档大纲
+   （读屏软件靠这个导航）。这里的层级是 h1 → h2(两扇门) → h2(六种视图/曲库)。 */
+.door h2{font-size:21px; font-weight:600; letter-spacing:-.015em; margin-bottom:9px}
+.door p{font-size:13.5px; color:var(--txt-2); line-height:1.68; margin-bottom:18px; max-width:40ch}
+.door .n{
+  display:flex; gap:16px; font-family:var(--mono); font-size:12px;
+  color:var(--dim); letter-spacing:.03em;
+}
+.door .go{display:inline-block; margin-top:18px; font-family:var(--mono); font-size:13px}
+.door.music:hover{border-color:rgba(255,164,43,.42)}
+.door.music .go{color:var(--amber)}
+.door.film:hover{border-color:rgba(143,214,184,.42)}
+.door.film .go{color:var(--film)}
+
+/* ══ 胶片带 ══════════════════════════════════════════════════════
+   跟上面那条频谱带**对称**：音乐区用一首真歌的频谱当证据，
+   影视区用 13 张真封面当证据。两条带子，两个区，一个页。 */
+.strip-wrap{margin-top:22px}
+.strip-scroll{
+  display:flex; gap:11px; overflow-x:auto; padding:2px 0 12px;
+  scrollbar-color:#26262e transparent;
+}
+.strip-scroll::-webkit-scrollbar{height:8px}
+.strip-scroll::-webkit-scrollbar-track{background:transparent}
+.strip-scroll::-webkit-scrollbar-thumb{background:#26262e; border-radius:4px; border:0}
+.f{
+  position:relative; flex:none; width:168px; aspect-ratio:3/2;
+  border-radius:3px; overflow:hidden; background:var(--panel);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.045);
+  transition:transform 140ms ease-out;
+}
+.f:hover{transform:translateY(-3px)}
+.f img{
+  position:absolute; inset:0; z-index:0; width:100%; height:100%;
+  object-fit:cover; display:block; opacity:0; transition:opacity .5s ease;
+}
+.f img.in{opacity:1}
+/* 外站的暗一档 —— 颜色本身在编码"能不能直接看"。
+   跟放映厅同一手法：用 filter 不用 opacity（那边 opacity 会把
+   下面的版式块透出来，这边虽然没有版式块，但两处该长一个样）。 */
+.f.away img.in{filter:saturate(.6) brightness(.62)}
+.f .yy{
+  position:absolute; left:8px; bottom:7px; z-index:1;
+  font-family:var(--mono); font-size:11px; letter-spacing:.06em;
+  color:#d6d6dc; text-shadow:0 1px 5px #000; font-variant-numeric:tabular-nums;
+}
+/* 没有封面的就退成年份底版，不摆一张空图 */
+.f.noimg{background:#0d0d10}
+.f.noimg .yy{
+  position:static; display:grid; place-items:center; height:100%;
+  font-family:"Songti SC","STSong",Georgia,serif; font-size:26px;
+  color:#2b2b33; text-shadow:none;
+}
+
+/* 那一整条频谱。高度按全曲概览的比例给，不是随手定的。 */
+.hero-viz{margin-top:56px; position:relative}
+#heroSpec{width:100%; height:172px; display:block; border-radius:3px}
+.hero-viz::after{        /* 底边压一道渐隐，让数据"埋"进页面而不是硬切 */
+  content:''; position:absolute; left:0; right:0; bottom:0; height:34px;
+  background:linear-gradient(to bottom, rgba(11,11,12,0), var(--bg));
+  pointer-events:none;
+}
+.hero-cap{
+  display:flex; gap:18px; flex-wrap:wrap; align-items:baseline;
+  font-family:var(--mono); font-size:12px; color:var(--dim);
+  padding:11px 2px 0; letter-spacing:.03em;
+}
+.hero-cap b{color:var(--txt-2); font-weight:400}
+.hero-cap .sep{color:#2e2e36}
+
+/* ══ 视图 ══════════════════════════════════════════════════════
+   六块，左右交替 —— 同尺寸同构的卡片排成一列是这个品类的默认动作，
+   而这里的六件事**本来就不一样大**：频谱是主角，调性只是两个标签。
+   所以尺寸、留白、甚至文字量都跟着内容的重量走。 */
+.sec-head{
+  display:flex; align-items:baseline; gap:14px;
+  padding:76px 0 8px;
+}
+.sec-head h2{font-size:22px; font-weight:600; letter-spacing:-.015em}
+.sec-head .hint{
+  font-family:var(--mono); font-size:12px; color:var(--dim); letter-spacing:.04em;
+}
+.sec-head .rule{flex:1; height:1px; background:var(--line-soft); margin-bottom:5px}
+
+.view{
+  display:grid; grid-template-columns:minmax(0,1.12fr) minmax(0,.88fr);
+  gap:clamp(24px, 4vw, 54px); align-items:center;
+  padding:44px 0; border-top:1px solid var(--line-soft);
+}
+.view:first-of-type{border-top:0}
+/* ★ 交替：`.viz` 在标记里**永远是第一个子元素**，所以要让 `.txt` 抢到前面去。
+   给 viz 设 order:-1 等于什么都没做 —— 它本来就排在第一位。 */
+.view.flip{grid-template-columns:minmax(0,.88fr) minmax(0,1.12fr)}
+.view.flip .txt{order:-1}
+.viz canvas{width:100%; display:block; border-radius:3px; background:var(--panel)}
+
+.v-name{font-size:19px; font-weight:600; letter-spacing:-.01em; margin-bottom:9px}
+.v-q{color:var(--txt-2); font-size:14px; line-height:1.7; max-width:42ch}
+.v-facts{
+  margin-top:16px; display:flex; flex-direction:column; gap:7px;
+  font-family:var(--mono); font-size:11.5px; line-height:1.55;
+}
+.v-facts div{display:flex; gap:9px; align-items:baseline}
+.v-facts .k{color:var(--dim); flex:none; min-width:52px}
+.v-facts .v{color:var(--txt-2)}
+
+/* 实测 / 推断 的标记。这两个词是整页最要紧的区分 ——
+   颜色本身就编码可信度，不靠读者去读小字。 */
+.tag{
+  font-family:var(--mono); font-size:11px; letter-spacing:.06em;
+  padding:2px 7px; border-radius:3px; border:1px solid; flex:none;
+}
+.tag.m{color:var(--amber); border-color:rgba(255,164,43,.32); background:rgba(255,164,43,.07)}
+.tag.e{color:var(--cold);  border-color:rgba(74,198,210,.30); background:rgba(74,198,210,.06)}
+
+/* ══ 曲库 ══════════════════════════════════════════════════════ */
+.shelf{margin-top:8px}
+.row{
+  display:grid;
+  grid-template-columns:minmax(0,2.4fr) minmax(0,1.4fr) 62px 78px 54px 58px;
+  gap:16px; align-items:baseline;
+  padding:10px 10px; border-radius:4px;
+  font-size:13px;
+  transition:background 110ms ease-out;
+}
+.row.head{
+  font-family:var(--mono); font-size:11.5px; color:var(--dim);
+  letter-spacing:.08em; text-transform:uppercase;
+  border-bottom:1px solid var(--line); border-radius:0;
+  padding-bottom:8px; position:sticky; top:54px;
+  background:var(--bg); z-index:5;
+}
+.row:not(.head):hover{background:#15151a}
+.row .t{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.row .t b{font-weight:500}
+.row .t span{color:var(--dim); font-size:12px; margin-left:7px}
+.row .num{
+  font-family:var(--mono); font-size:11.5px; color:var(--txt-2);
+  font-variant-numeric:tabular-nums; text-align:right;
+}
+.row .ky{
+  font-family:var(--mono); font-size:11.5px; color:var(--cold);
+  text-align:right;
+}
+
+/* ══ 收尾 ══════════════════════════════════════════════════════ */
+.foot{
+  margin-top:70px; padding:44px 0 80px;
+  border-top:1px solid var(--line-soft);
+  display:flex; gap:26px; align-items:flex-end; flex-wrap:wrap;
+}
+.foot p{color:var(--dim); font-size:12px; max-width:52ch; line-height:1.75}
+.foot .spacer{flex:1}
+.foot code{
+  font-family:var(--mono); font-size:11.5px; color:var(--txt-2);
+  background:#17171c; padding:2px 6px; border-radius:3px;
+}
+
+/* ── 入场 ──────────────────────────────────────────────────────
+   一页只编排**一个**时刻（上面那条频谱的揭示），其余一律克制：
+   视图和曲库只是淡入，而且错开 —— 不是每节放同一个入场动画。 */
+.rise{opacity:0; transform:translateY(14px)}
+.rise.in{
+  opacity:1; transform:none;
+  transition:opacity 520ms cubic-bezier(.16,1,.3,1),
+             transform 520ms cubic-bezier(.16,1,.3,1);
+}
+@media (prefers-reduced-motion: reduce){
+  .rise{opacity:1; transform:none}
+  .rise.in{transition:none}
+  html{scroll-behavior:auto}
+}
+
+@media (max-width: 900px){
+  .hero{padding-top:44px}
+  .hero-grid{grid-template-columns:1fr; gap:22px; align-items:start}
+  .doors{grid-template-columns:1fr; gap:12px}
+  .strip-scroll .f{width:142px}
+  .view{grid-template-columns:1fr; gap:20px}
+  .view.flip{grid-template-columns:1fr}
+  .view.flip .txt{order:0}
+  #heroSpec{height:112px}
+  .row{grid-template-columns:minmax(0,1fr) 62px 54px; gap:10px}
+  .row .artist,.row .lra,.row .key{display:none}
+  .row.head .artist,.row.head .lra,.row.head .key{display:none}
+}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <span class="brand">MUSIC<b>LAB</b></span>
+  <span class="spacer"></span>
+  <span class="live"><i class="pulse"></i>本地运行 · 不联网</span>
+</div>
+
+<main>
+
+  <!-- ══ 第一屏 ══
+       2026-09-27：这一屏从"音乐区的门"升级成"整个站点的门"。
+       放映厅并进来之后，标题要是还只说音乐，影视区在首屏就成了附属品。
+       所以标题提到站点级，两个区各给一扇**对等**的门 —— 谁都不是谁的链接。
+
+       ★ 门里的数字全是真读出来的（曲数 / 片数 / 能直接看的部数），
+         不是写死在文案里的。读不到就空着，不编。 -->
+  <section class="hero">
+    <div class="hero-grid">
+      <h1>一台机器，<br><em>两个区</em></h1>
+      <p class="lede">
+        音乐那边把歌<b>摊开</b> —— 六种视图，一条时间轴。<br>
+        影视那边是间<b>放映厅</b> —— 13 部片子，点了就放。<br>
+        全在本机跑，不联网、不登录、不上传。
+      </p>
+    </div>
+
+    <div class="doors">
+      <a class="door music" href="/player">
+        <div class="k">音乐区</div>
+        <h2>声学显微镜</h2>
+        <p>把一首歌翻过来看。每个数字都从音频信号直接算出来，不是标签，也不是猜的。</p>
+        <div class="n"><span id="doorSongs"></span><span>六种视图</span></div>
+        <span class="go">进入播放器 →</span>
+      </a>
+      <a class="door film" href="/screening">
+        <div class="k">影视区</div>
+        <h2>放映厅</h2>
+        <p>黑色电影和希区柯克。在库里的点了就进，在外站的先看说明，再决定去不去。</p>
+        <div class="n"><span id="doorFilms"></span><span id="doorReady"></span></div>
+        <span class="go">进入放映厅 →</span>
+      </a>
+    </div>
+
+    <div class="hero-viz">
+      <canvas id="heroSpec"></canvas>
+      <div class="hero-cap" id="heroCap">
+        <span>正在载入样本 …</span>
+      </div>
+    </div>
+
+    <!-- 影视区的证据带。跟上面那条频谱带对称 ——
+         音乐区证明自己的方式是摊开一首真歌，影视区的方式是把封面铺出来。 -->
+    <div class="strip-wrap" id="stripWrap" hidden>
+      <div class="strip-scroll" id="strip"></div>
+      <div class="hero-cap" id="stripCap"></div>
+    </div>
+  </section>
+
+  <!-- ══ 六种视图 ══ -->
+  <div class="sec-head">
+    <h2>六种视图</h2>
+    <span class="hint">同一段时间 · 可缩放 2 / 4 / 8 / 16 秒</span>
+    <span class="rule"></span>
+  </div>
+
+  <section id="views"></section>
+
+  <!-- ══ 曲库 ══ -->
+  <div class="sec-head" id="shelfHead">
+    <h2>曲库</h2>
+    <span class="hint" id="shelfCount">载入中 …</span>
+    <span class="rule"></span>
+  </div>
+  <section class="shelf" id="shelf"></section>
+
+  <div class="foot">
+    <p>
+      全部在本机运行，<code>127.0.0.1</code>，不出网、不登录、不上传。<br>
+      音乐区的分析结果是文件，放在 <code>analysis/</code>，曲目在 <code>media/</code>；
+      影视区的片子还在 <code>~/Projects/ScreeningRoom/</code>，这边只是把地址指过去。
+    </p>
+    <span class="spacer"></span>
+    <a class="cta ghost" href="/player">播放器 →</a>
+    <a class="cta ghost" href="/screening">放映厅 →</a>
+  </div>
+
+</main>
+
+<script>
+'use strict';
+
+const $ = s => document.querySelector(s);
+const AMBER = '#ffa42b';
+const DIM = '#5c5c66', TXT2 = '#9a9aa5';
+
+const STEM_COLOR = {
+  vocals:'#ffa42b', drums:'#e8563f', bass:'#9b6cff',
+  guitar:'#52c46a', piano:'#57a8f0', other:'#7a8699',
+};
+const BAND_LABEL = { sub:'超低', low:'低频', mid:'中频', high_mid:'中高', high:'高频' };
+
+const fmtTime = s => {
+  if (!isFinite(s)) return '0:00';
+  return Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+};
+const fmtHz = f => f >= 1000 ? (f / 1000).toFixed(f % 1000 ? 1 : 0) + 'k' : String(Math.round(f));
+
+function fit(cv, h){
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || cv.parentElement.clientWidth || 600;
+  const W = Math.max(1, Math.round(w * dpr)), H = Math.max(1, Math.round(h * dpr));
+  if (cv.width !== W || cv.height !== H){ cv.width = W; cv.height = H; }
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { g, w, h, dpr };
+}
+
+/* 峰值池化：每桶取最大。取平均会把瞬态抹平 —— 跟播放器里同一条规矩。 */
+function pool(arr, i0, i1, n){
+  const out = new Float32Array(n), len = arr.length;
+  for (let b = 0; b < n; b++){
+    const a = i0 + (i1 - i0) * b / n, z = i0 + (i1 - i0) * (b + 1) / n;
+    let m = 0;
+    for (let i = Math.max(0, a | 0); i < z && i < len; i++) if (arr[i] > m) m = arr[i];
+    out[b] = m;
+  }
+  return out;
+}
+
+/* ── 频谱配色：单色琥珀阶梯 ────────────────────────────────────
+   播放器用的是按数据分布定制的多段色阶；这里是小图，用单色阶梯就够，
+   而且更符合"仪器"的立场 —— 亮度就是能量，不做彩虹。 */
+function specColor(v){
+  if (v <= 0) return [19, 19, 21];
+  const t = Math.pow(v / 255, 1.15);
+  return [19 + t * 236, 19 + t * 145, 21 + t * 22];
+}
+
+function drawSpecInto(cv, spec, h){
+  const cols = spec.cols, rows = spec.rows;
+  const bin = atob(spec.data), u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+
+  const off = document.createElement('canvas');
+  off.width = cols; off.height = rows;
+  const og = off.getContext('2d');
+  const img = og.createImageData(cols, rows);
+  const out = new Uint32Array(img.data.buffer);
+  for (let y = 0; y < rows; y++){
+    // ★ 翻转频率轴：数据第 0 行是最低频，画布最底下才是低频
+    const src = (rows - 1 - y) * cols, dst = y * cols;
+    for (let x = 0; x < cols; x++){
+      const c = specColor(u8[src + x]);
+      out[dst + x] = (255 << 24) | (c[2] << 16) | (c[1] << 8) | c[0];
+    }
+  }
+  og.putImageData(img, 0, 0);
+
+  const { g, w } = fit(cv, h);
+  g.imageSmoothingEnabled = true;          // 这里是**缩小**，缩小用平滑
+  g.drawImage(off, 0, 0, cols, rows, 0, 0, w, h);
+  return { g, w, h };
+}
+
+/* ── 六个小图 ────────────────────────────────────────────────── */
+
+function miniWave(cv, A){
+  const { g, w, h } = fit(cv, 118);
+  g.clearRect(0, 0, w, h);
+  const p = A.waveform.peaks, n = Math.max(1, Math.round(w / 1.6));
+  const v = pool(p, 0, p.length, n);
+  const mid = h / 2, amp = mid - 5, colW = w / n;
+  // 比播放器里那条进度条亮一档 —— 这里没有已播放/未播放的分色，
+  // 整条都是同一个灰，太暗就整个沉进背景里了。
+  g.fillStyle = 'rgba(186,186,198,.56)';
+  for (let i = 0; i < n; i++){
+    const a = v[i] * amp;
+    g.fillRect(i * colW, mid - a, Math.max(1, colW * .82), a * 2 || 1);
+  }
+  g.fillStyle = 'rgba(255,255,255,.07)';
+  g.fillRect(0, mid, w, 1);
+}
+
+function miniSpec(cv, A){ drawSpecInto(cv, A.spectrum, 152); }
+
+function miniLoud(cv, A){
+  const { g, w, h } = fit(cv, 118);
+  g.clearRect(0, 0, w, h);
+  const c = A.loudness.curve;
+  let lo = Infinity, hi = -Infinity;
+  for (const v of c){ if (v < lo) lo = v; if (v > hi) hi = v; }
+  const pad = Math.max(.5, (hi - lo) * .18); lo -= pad; hi += pad;
+  const Y = v => h - ((v - lo) / (hi - lo)) * (h - 24) - 12;
+  c.forEach((v, i) => {
+    const x = i / (c.length - 1) * w, y = Y(v);
+    i ? g.lineTo(x, y) : (g.beginPath(), g.moveTo(x, y));
+  });
+  g.strokeStyle = AMBER; g.lineWidth = 1.5; g.stroke();
+  // 那根 400ms 的比例尺也跟着放上来 —— 缩略图也不许假装自己比实际更细
+  const bw = (A.loudness.win_sec / A.meta.duration) * w;
+  g.fillStyle = 'rgba(255,164,43,.13)';
+  g.fillRect(w - bw, 0, bw, h);
+  g.strokeStyle = DIM; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(w - bw, h - 9); g.lineTo(w, h - 9); g.stroke();
+}
+
+function miniStems(cv, S){
+  const { g, w, h } = fit(cv, 138);
+  g.clearRect(0, 0, w, h);
+  const T = S.stems.tracks;
+  const rowH = h / T.length, padY = 4, bandH = rowH - padY * 2;
+  const cols = Math.max(1, Math.round(w / 2));
+  T.forEach((t, i) => {
+    const top = i * rowH + padY, base = top + bandH;
+    g.fillStyle = 'rgba(255,255,255,.035)';
+    g.fillRect(0, top, w, bandH);
+    const v = pool(t.curve, 0, t.curve.length, cols);
+    const c = STEM_COLOR[t.name] || '#7a8699';
+    for (let x = 0; x < cols; x++){
+      if (v[x] <= .012) continue;
+      const bh = Math.max(1, v[x] * bandH);
+      const m = c.match(/\w\w/g).map(z => parseInt(z, 16));
+      g.fillStyle = `rgba(${m[0]},${m[1]},${m[2]},${(.18 + v[x] * .62).toFixed(2)})`;
+      g.fillRect(x * (w / cols), base - bh, Math.max(1, w / cols * .9), bh);
+    }
+  });
+}
+
+function miniPlane(cv, P){
+  const { g, w, h } = fit(cv, 152);
+  g.clearRect(0, 0, w, h);
+  const pad = { l: 30, r: 8, t: 16, b: 20 };
+  const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+  let cl = Infinity, ch = -Infinity, dl = Infinity, dh = -Infinity;
+  for (const t of P.shape.tracks) for (const x of t.windows){
+    if (x.centroid == null || x.decay == null) continue;
+    if (x.centroid < cl) cl = x.centroid; if (x.centroid > ch) ch = x.centroid;
+    if (x.decay < dl) dl = x.decay;       if (x.decay > dh) dh = x.decay;
+  }
+  if (!isFinite(cl)) return;
+  const X = f => pad.l + (Math.log10(Math.max(50, f) / 50) / Math.log10(8000 / 50)) * pw;
+  const Y = d => pad.t + ((dh - d) / (dh - dl || 1)) * ph;
+  g.strokeStyle = 'rgba(255,255,255,.055)';
+  for (let i = 0; i <= 3; i++){
+    const y = pad.t + ph * i / 3;
+    g.beginPath(); g.moveTo(pad.l, y); g.lineTo(pad.l + pw, y); g.stroke();
+  }
+  g.globalCompositeOperation = 'lighter';
+  for (const t of P.shape.tracks){
+    const c = STEM_COLOR[t.name] || '#7a8699';
+    const m = c.match(/\w\w/g).map(z => parseInt(z, 16));
+    for (const x of t.windows){
+      if (x.centroid == null || x.decay == null) continue;
+      g.fillStyle = `rgba(${m[0]},${m[1]},${m[2]},${(.06 + Math.min(.10, (x.active || 0) * .10)).toFixed(3)})`;
+      g.fillRect(X(x.centroid) - 1.5, Y(x.decay) - 1.5, 3, 3);
+    }
+  }
+  g.globalCompositeOperation = 'source-over';
+}
+
+function miniKey(cv, A){
+  const { g, w, h } = fit(cv, 96);
+  g.clearRect(0, 0, w, h);
+  const K = A.key; if (!K) return;
+  const cand = K.candidates.slice(0, 5);
+  const max = Math.max(...cand.map(c => Math.abs(c.corr)));
+  const rowH = h / cand.length;
+  cand.forEach((c, i) => {
+    const y = i * rowH + 5, bh = rowH - 10;
+    const bw = Math.max(2, Math.abs(c.corr) / max * (w - 92));
+    g.fillStyle = 'rgba(74,198,210,.16)';
+    g.fillRect(78, y, w - 92, bh);
+    g.fillStyle = i === 0 ? 'rgba(74,198,210,.85)' : 'rgba(74,198,210,.42)';
+    g.fillRect(78, y, bw, bh);
+    g.fillStyle = i === 0 ? TXT2 : DIM;
+    g.font = '11px ui-monospace, monospace';
+    g.textAlign = 'right'; g.textBaseline = 'middle';
+    g.fillText(c.label, 70, y + bh / 2);
+    g.textAlign = 'left';
+    g.fillText(Math.abs(c.corr).toFixed(3), 78 + bw + 7, y + bh / 2);
+  });
+  g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+}
+
+/* ── 视图清单 ──────────────────────────────────────────────────
+   顺序按"从你熟悉的到你不熟悉的"排：波形是人人见过的，
+   声学画像和调性推断是这一页真正独有的东西，放后面。 */
+const VIEWS = [
+  { id:'wave',  name:'波形',     q:'这首歌哪里是响的、哪里是空的。',
+    tag:'m', facts:[['采样','一格 6.2 毫秒'],['点数','40,134 个峰值点'],
+                    ['规矩','取峰值不取平均 —— 平均会把鼓点抹平成一条香肠']] },
+  { id:'spec',  name:'频谱',     q:'声音里到底有什么。横着是时间，竖着是频率，亮的地方就是能量所在。',
+    tag:'m', facts:[['频率行','448 行 · 对数轴 30Hz–11kHz'],
+                    ['时间','46.4ms 的窗 · 11.6ms 一步'],
+                    ['踩过的坑','窗长决定时间分辨率，步进只决定采样密度']] },
+  { id:'loud',  name:'响度',     q:'哪里响、哪里轻。副歌是不是真的比主歌响，一眼看得出。',
+    tag:'m', facts:[['标准','EBU R128 momentary'],
+                    ['窗口','400ms —— 这是物理下限，不是偷懒'],
+                    ['诚实','窗口越窄它越糊，图上那根比例尺就是它糊的范围']] },
+  { id:'stems', name:'分轨',     q:'谁在什么时候响。六条轨拆开，鼓进来的那一拍别的乐器在干什么。',
+    tag:'e', facts:[['模型','htdemucs_6s · 每帧 50ms'],
+                    ['⚠ 注意','这是**模型猜的**，不是量出来的'],
+                    ['已知问题','官方说钢琴轨和吉他轨是实验性的，有串音']] },
+  { id:'plane', name:'声学画像', q:'这条轨是「按下去就掉」还是「按住不变」。横轴是明亮程度，竖轴是衰减快慢。',
+    tag:'m', facts:[['算法','谱质心 × 包络衰减 · 全靠信号本身的数学量'],
+                    ['不依赖模型','分轨分错了，这张图也不会跟着错'],
+                    ['淡影','整曲的落点分布 —— 点压在影子上 = 此刻就是它的常态']] },
+  { id:'key',   name:'调性与速度', q:'什么调、多快。',
+    tag:'e', facts:[['调性','Krumhansl 调性剖面相关度'],
+                    ['速度','librosa 拍点追踪'],
+                    ['⚠ 注意','两个都是**推断值**，复杂编曲会错']] },
+];
+
+function buildViews(){
+  const host = $('#views');
+  host.innerHTML = VIEWS.map((v, i) => `
+    <div class="view rise ${i % 2 ? 'flip' : ''}" data-cv="${v.id}">
+      <div class="viz"><canvas id="cv-${v.id}"></canvas></div>
+      <div class="txt">
+        <div class="v-name">${v.name} <span class="tag ${v.tag}">${v.tag === 'm' ? '实测' : '推断'}</span></div>
+        <p class="v-q">${v.q.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')}</p>
+        <div class="v-facts">
+          ${v.facts.map(([k, val]) => `<div><span class="k">${k}</span><span class="v">${
+            val.replace(/\*\*(.+?)\*\*/g, '<b style="color:var(--txt);font-weight:500">$1</b>')
+          }</span></div>`).join('')}
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+function drawViews(A, S, P){
+  // got 记录**真的画出来了**的视图。少一份数据就少画一块，这没问题；
+  // 但别把"画了"和"登记了"搞混 —— 之前 key 在 A 分支里画了却没写进 got，
+  // 于是被下面那段隐藏逻辑整块收掉：图画好了，框没了。
+  const got = {};
+  if (A){
+    miniWave($('#cv-wave'), A); miniSpec($('#cv-spec'), A);
+    miniLoud($('#cv-loud'), A); miniKey($('#cv-key'), A);
+    got.wave = got.spec = got.loud = got.key = 1;
+  }
+  if (S){ miniStems($('#cv-stems'), S); got.stems = 1; }
+  if (P){ miniPlane($('#cv-plane'), P); got.plane = 1; }
+  // 缺哪份数据就把哪块收起来 —— 摆一张空图在那儿比不显示更糟
+  for (const v of VIEWS) if (!got[v.id]){
+    const el = document.querySelector(`.view[data-cv="${v.id}"]`);
+    if (el) el.style.display = 'none';
+  }
+}
+
+/* ── 曲库 ─────────────────────────────────────────────────── */
+function buildShelf(idx){
+  $('#shelfCount').textContent = `${idx.count} 首 · 点一行直接进播放器`;
+  $('#doorSongs').textContent = `${idx.count} 首`;
+  $('#shelf').innerHTML =
+    `<div class="row head">
+       <span>曲目</span><span class="artist">专辑</span>
+       <span class="num">速度</span><span class="key">调性</span>
+       <span class="num">时长</span><span class="num lra">LUFS</span>
+     </div>` +
+    idx.tracks.slice().sort((a, b) =>
+      a.artist.localeCompare(b.artist, 'zh') || a.title.localeCompare(b.title, 'zh')
+    ).map(t => `
+      <a class="row" href="/player?id=${encodeURIComponent(t.id)}">
+        <span class="t"><b>${esc(t.title)}</b><span>${esc(t.artist)}</span></span>
+        <span class="t artist" style="color:var(--dim);font-size:12px">${esc(t.album)}</span>
+        <span class="num">${t.bpm.toFixed(0)}</span>
+        <span class="ky">${esc(t.key || '—')}</span>
+        <span class="num">${fmtTime(t.dur)}</span>
+        <span class="num lra">${t.lufs != null ? t.lufs.toFixed(1) : '—'}</span>
+      </a>`).join('');
+}
+
+const esc = s => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/* ── 入场动画 ────────────────────────────────────────────────── */
+function armRise(){
+  const io = new IntersectionObserver((es) => {
+    es.forEach((e, i) => {
+      if (!e.isIntersecting) return;
+      // 错开一点，但**不是每节同一个延迟** —— 一页里同一个入场动作
+      // 重复六遍，看起来就是模板，不是设计
+      const d = Math.min(240, i * 70 + (e.target.dataset.i || 0) * 45);
+      setTimeout(() => e.target.classList.add('in'), d);
+      io.unobserve(e.target);
+    });
+  }, { rootMargin: '0px 0px -8% 0px', threshold: .08 });
+  document.querySelectorAll('.rise').forEach((el, i) => {
+    el.dataset.i = i; io.observe(el);
+  });
+}
+
+/* ── 载入 ────────────────────────────────────────────────────── */
+async function main(){
+  buildViews();
+
+  let idx;
+  try {
+    idx = await (await fetch('/api/analysis/_index')).json();
+  } catch (e){
+    $('#shelfCount').textContent = '索引读不到 —— 先跑 python3 build_index.py';
+    armRise();
+    return;
+  }
+  buildShelf(idx);
+
+  // 样片优先挑 Polyphia（纯器乐，六种视图都有东西可看），挑不到就用第一首。
+  const sample = idx.tracks.find(t => /^Polyphia/.test(t.id)) || idx.tracks[0];
+  const u = id => '/api/analysis/' + encodeURIComponent(id);
+
+  let A = null, S = null, P = null;
+  try {
+    [A, S, P] = await Promise.all([
+      fetch(u(sample.id)).then(r => r.json()),
+      fetch(u(sample.id + '.stems')).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch(u(sample.id + '.shape')).then(r => r.ok ? r.json() : null).catch(() => null),
+    ]);
+  } catch (e){ console.warn('样片载入失败：', e); }
+
+  if (A){
+    drawViews(A, S, P);
+    setHero(A, sample);
+  }
+  armRise();
+}
+
+/* 第一屏那条频谱：真实的全曲概览，从左往右揭开一次。
+   整页只安排这一个时刻 —— 其余都是安静的淡入。 */
+function setHero(A, sample){
+  const cv = $('#heroSpec');
+  const cols = A.spectrum.cols, rows = A.spectrum.rows;
+  const bin = atob(A.spectrum.data), u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+
+  const off = document.createElement('canvas');
+  off.width = cols; off.height = rows;
+  const og = off.getContext('2d');
+  const img = og.createImageData(cols, rows);
+  const out = new Uint32Array(img.data.buffer);
+  for (let y = 0; y < rows; y++){
+    const src = (rows - 1 - y) * cols, dst = y * cols;
+    for (let x = 0; x < cols; x++){
+      const c = specColor(u8[src + x]);
+      out[dst + x] = (255 << 24) | (c[2] << 16) | (c[1] << 8) | c[0];
+    }
+  }
+  og.putImageData(img, 0, 0);
+
+  const draw = frac => {
+    const { g, w, h } = fit(cv, 172);
+    g.clearRect(0, 0, w, h);
+    g.imageSmoothingEnabled = true;
+    g.drawImage(off, 0, 0, cols, rows, 0, 0, w * frac, h);
+  };
+
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce){ draw(1); }
+  else {
+    const t0 = performance.now(), D = 820;
+    const tick = now => {
+      const k = Math.min(1, (now - t0) / D);
+      draw(1 - Math.pow(1 - k, 3));            // ease-out cubic
+      if (k < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+
+  const k = A.key;
+  $('#heroCap').innerHTML = [
+    `<b>${esc(sample.title)}</b> — ${esc(sample.artist)}`,
+    `<span class="sep">|</span>全曲 ${fmtTime(A.meta.duration)}`,
+    `<span class="sep">|</span>${A.spectrum.cols.toLocaleString()} 列 × ${rows} 行`,
+    `<span class="sep">|</span>每列 11.6ms`,
+    `<span class="sep">|</span>${fmtHz(A.meta.sample_rate)} / ${A.meta.subtype}`,
+    k ? `<span class="sep">|</span>${esc(k.label)}` : '',
+  ].filter(Boolean).join(' ');
+}
+
+/* ── 影视区：门上那两个数 + 那条胶片带 ────────────────────────────
+   数据从 /api/screening 来（放映厅的 library.json，路径见 server.py）。
+   读不到就整块不收 —— 门上留空、带子不出现，不摆假数、不摆空图。 */
+async function loadFilm(){
+  let d;
+  try { d = await (await fetch('/api/screening')).json(); }
+  catch (e){ console.warn('片库载入失败：', e); return; }
+  const shelf = d.shelf || [];
+  if (!shelf.length) return;
+
+  const ready = shelf.filter(x => x.kind === 'local' && x.status === 'ready');
+  const away = shelf.filter(x => !(x.kind === 'local' && x.status === 'ready'));
+  $('#doorFilms').textContent = `${shelf.length} 条`;
+  $('#doorReady').textContent = `${ready.length} 部能直接看`;
+
+  // 能直接看的排前面 —— 带子的第一屏应该是"现在就能放的东西"
+  const order = [...ready, ...away];
+  $('#strip').innerHTML = order.map(f => {
+    const ok = f.kind === 'local' && f.status === 'ready';
+    return `<div class="f${ok ? '' : ' away'}" title="${esc(f.title)}">` +
+      `<div class="yy">${esc(f.year || '—')}</div>` +
+      `<img alt="" loading="lazy" src="/screening/covers/${encodeURIComponent(f.id)}.jpg">` +
+    `</div>`;
+  }).join('');
+
+  // 图加载好了才淡入；加载不出来就把它拿掉，露出下面那个年份底版
+  $('#strip').querySelectorAll('.f').forEach(f => {
+    const img = f.querySelector('img');
+    const drop = () => f.classList.add('noimg');
+    const show = () => img.classList.add('in');
+    if (img.complete){ img.naturalWidth ? show() : (img.remove(), drop()); return; }
+    img.addEventListener('load', show);
+    img.addEventListener('error', () => { img.remove(); drop(); });
+  });
+
+  $('#stripCap').innerHTML = [
+    `<b>${shelf.length}</b> 条`,
+    `<span class="sep">|</span>在库里 ${ready.length} 部 · 点了就进`,
+    `<span class="sep">|</span>其余在外站或在队列里`,
+    `<span class="sep">|</span>黑色电影 &amp; 希区柯克`,
+  ].join(' ');
+  $('#stripWrap').hidden = false;
+}
+
+main();
+loadFilm();
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "updated": "",
+  "note": "曲库索引。由 tools/build_library.py 从 media/ 扫出来 —— 有几个写几个，不编数据。标签读自 FLAC 的 Vorbis comment。",
+  "count": 0,
+  "tagged": 0,
+  "analyzed": 0,
+  "shelf": []
+}

@@ -1,0 +1,664 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>放映厅 · MusicLab</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════
+   放映厅 —— MusicLab 影视区
+   ───────────────────────────────────────────────────────────────
+   2026-09-27 从 ~/Projects/ScreeningRoom/static/index.html 迁进来，
+   跟音乐区并成一个站点。
+
+   迁移时定的规矩（作者拍的）：**框架统一，色调各留。**
+     · 统一的：字体栈、字号体系、圆角（3/4px）、间距节奏、
+               微反馈时长（110–140ms）、浏览器界面（选区/滚动条/焦点环）、
+               顶栏做法。两个区伸出来的是**同一双手**。
+     · 各留的：音乐区是琥珀 #ffa42b 的仪器，这里是冷灰 + 冷绿 #8fd6b8 的影院。
+               影院本来就该是暗的、冷的；仪器本来就该是暖的。
+               把两个区染成一个色，是抹掉它们的性格。
+     ★ 唯一的例外：顶栏里那个 MUSICLAB 永远是琥珀 —— 不管你在哪个区。
+       品牌色不动，区色才动，这一条本身就是"这是一个站点"的证据。
+
+   ⚠️ 片库数据不在这个项目里：海报 / 片子 / library.json 都还在
+      ~/Projects/ScreeningRoom/，server.py 把 URL 指过去。见 server.py 文件头。
+   ═══════════════════════════════════════════════════════════════ */
+:root{
+  --bg:#08080a;                 /* 比音乐区(#0b0b0c)更黑一档 —— 影院 */
+  --panel:#0d0d10; --line:#1b1b20; --line-2:#232329;
+  --txt:#e9e9ec; --txt-2:#9a9aa5;
+  /* ★ 这个灰跟音乐区**同一个值** —— 框架统一，包括灰阶。
+     这里原来是自己的一套（#6b6b74，在 #08080a 上只有 3.79:1），
+     跟音乐区当初那个 #5c5c66 是同一个病。读不清的灰不是风格，是缺陷。 */
+  --dim:#83838e;
+  --green:#8fd6b8;              /* 本区色：在库里那点光 */
+  --amber:#ffa42b;              /* 品牌色：只在顶栏用 */
+  --warn:#b08f5e;
+  --by-me:#9c8659;              /* 「作者」那条署名。原来是 #6a5c3c，只有 3.06:1 */
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  --ease-out:cubic-bezier(.16,1,.3,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scrollbar-color:var(--line-2) var(--bg); scrollbar-width:thin}
+body{
+  background:var(--bg); color:var(--txt);
+  font:15px/1.62 -apple-system, "SF Pro Text", "PingFang SC", system-ui, sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+/* 浏览器自己的东西也归设计管 —— 跟音乐区同一套做法，只换颜色 */
+::selection{background:rgba(143,214,184,.28); color:#fff}
+::-webkit-scrollbar{width:12px; height:12px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--line-2); border-radius:6px; border:3px solid var(--bg)}
+::-webkit-scrollbar-thumb:hover{background:#3a3a45}
+:focus-visible{outline:2px solid var(--green); outline-offset:3px; border-radius:2px}
+a{color:inherit; text-decoration:none}
+a:hover{text-decoration:underline; text-underline-offset:3px}
+kbd{
+  font-family:var(--mono); font-size:11px; color:var(--txt-2);
+  background:#17171c; padding:1px 5px; border-radius:3px; border:1px solid var(--line);
+}
+
+/* ── 顶栏：和音乐区逐字相同的那一条 ───────────────────────────── */
+.top{
+  display:flex; align-items:center; gap:14px;
+  padding:9px 26px; min-height:54px;
+  border-bottom:1px solid var(--line);
+  position:sticky; top:0; z-index:40;
+  background:rgba(8,8,10,.88);
+  -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);
+}
+.brand{font-family:var(--mono); font-size:13px; letter-spacing:.15em; text-transform:uppercase}
+.brand b{color:var(--amber); font-weight:600}     /* ★ 品牌色：两个区都是它 */
+.brand:hover{text-decoration:none}
+.brand:hover b{text-decoration:underline; text-underline-offset:3px}
+.crumb{font-family:var(--mono); font-size:12px; color:var(--dim); letter-spacing:.14em}
+.crumb::before{content:'/'; color:#33333d; margin-right:12px}
+.top .spacer{flex:1}
+.live{
+  font-family:var(--mono); font-size:12px; color:var(--dim);
+  display:flex; align-items:center; gap:7px; letter-spacing:.04em;
+}
+/* 静态的点，没有脉冲 —— 跟音乐区同一条理由：不变的事实不配脉冲 */
+.pulse{width:6px; height:6px; border-radius:50%; background:var(--green)}
+
+/* ── 墙 ───────────────────────────────────────────────────────── */
+#wall{
+  padding:46px 56px 120px;
+  transition:opacity .58s cubic-bezier(.4,0,.2,1),
+             transform .58s cubic-bezier(.4,0,.2,1),
+             filter .58s ease;
+}
+#wall.out{opacity:0; transform:scale(.96); filter:blur(10px); pointer-events:none}
+
+.head{display:flex; align-items:baseline; gap:16px; margin-bottom:46px; flex-wrap:wrap}
+.head .note{font-size:12.5px; color:var(--dim); line-height:1.6}
+.head .n{font-family:var(--mono); font-size:12px; color:var(--dim); letter-spacing:.1em}
+.head .tag{font-family:var(--mono); font-size:12px; color:var(--green); letter-spacing:.1em; margin-left:auto}
+
+/* 分区 */
+.sect{margin-bottom:64px}
+.sect-head{display:flex; align-items:baseline; gap:12px; margin-bottom:26px}
+.sect-head h2{font-size:11px; font-weight:500; letter-spacing:.24em; color:#86868f}
+.sect-head .c{font-family:var(--mono); font-size:12px; color:var(--dim); letter-spacing:.12em}
+.sect-head .line{flex:1; height:1px; background:var(--line)}
+.sect-head .note{font-size:12px; color:var(--dim); letter-spacing:.02em}
+
+.grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(236px,1fr)); gap:42px 30px}
+
+/* ★ 卡片抬起用 .28s 而不是原来的 .4s —— .4s 是"场景转换"的长度，
+   放在一次 hover 上会跟不上手。微反馈归微反馈，转场归转场。 */
+.card{cursor:pointer; transition:transform .28s cubic-bezier(.2,.8,.2,1)}
+.card:hover{transform:translateY(-5px)}
+
+/* ★ 框子从 16/9 改成 3/2。16:9 是"不放图"那个时代定的比例 ——
+   现在 13 张图回来了，实测比例是 1.33～1.78、平均 1.45，
+   3:2(1.5) 的平均裁切量最小（8%，16:9 要裁 21%）。框子该跟着素材走。 */
+.poster{
+  position:relative; aspect-ratio:3/2; background:var(--panel);
+  border-radius:3px; overflow:hidden;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.045);
+}
+
+/* 版式块：大字年份 + 细线 + 时长。**现在是兜底** ——
+   图没到、图挂了、或者这部根本没有封面时，你看到的是它。
+   （原来它是主视图，但 13 张封面下齐了一直没接上，见下面的 .shot。） */
+.plate{
+  position:absolute; inset:0; z-index:0;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:9px;
+  background:#0d0d10;
+}
+.plate .yr{
+  font-family:"Songti SC","STSong",Georgia,"Times New Roman",serif;
+  font-size:50px; line-height:1; letter-spacing:.02em;
+  color:#2b2b33; font-weight:400;
+}
+.plate .rule{width:26px; height:1px; background:#22222a}
+.plate .meta{
+  font-family:var(--mono); font-size:11px; letter-spacing:.2em; color:var(--dim);
+  font-variant-numeric:tabular-nums;
+}
+
+/* ── 封面：三处断裂的接法 ────────────────────────────────────────
+   原来的 cover()/fallbackThumb()/thumb() 三段线是断的：
+     ① cover() 定义了从没被调用，cardHTML 里也没生成宿主
+     ② thumb() 靠 querySelector('.fallback') 找宿主，而这个元素在
+        HTML 里根本不存在 —— 永远返回 null
+     ③ 就算把 cover() 接上，.plate 是 absolute inset:0 会盖住普通流的 img
+   现在换一条更短的路：<img> 直接写在 cardHTML 里，层级靠 z-index 排，
+   「图挂了」用 error 事件接住（本地有片就抽帧，没有就露出版式块）。
+   ★ 层级顺序不能乱：plate(0) → shot(1) → veil(2) → pmeta/badge(3) */
+.shot{
+  position:absolute; inset:0; z-index:1;
+  width:100%; height:100%; object-fit:cover; object-position:center;
+  opacity:0; transition:opacity .5s ease, transform .7s var(--ease-out);
+}
+.shot.in{opacity:1}
+.card:hover .shot{transform:scale(1.035)}
+.card.low-res .shot{image-rendering:auto}   /* 160×110 那三张，放大就放大吧 */
+/* ★ 外站的图暗一档 —— 颜色本身在编码"能不能看"。
+   ⚠️ 变暗**必须用 filter，不能用 opacity**：图是压在 .plate 版式块
+   *上面*的，opacity 一降，下面那个「1931」大字就透出来了，
+   两层内容叠在一起（2026-09-27 放大截图才发现，缩略图上看不出来）。
+   filter 只改颜色、不产生透明，图还是实心的，盖得住下面。 */
+.card.away .shot{opacity:0; filter:saturate(.6) brightness(.62)}
+.card.away .shot.in{opacity:1}
+
+.veil{
+  position:absolute; left:0; right:0; bottom:0; height:56%; z-index:2;
+  background:linear-gradient(to bottom, rgba(6,6,8,0), rgba(6,6,8,.92));
+  opacity:0; transition:opacity .5s ease; pointer-events:none;
+}
+.card.has-shot .veil{opacity:1}
+/* 有了图之后，年份/时长落到画面左下角，不再居中占满 */
+.pmeta{
+  position:absolute; left:12px; bottom:11px; z-index:3;
+  font-family:var(--mono); font-size:11px; letter-spacing:.12em;
+  color:#d6d6dc; font-variant-numeric:tabular-nums;
+  opacity:0; transform:translateY(4px); pointer-events:none;
+  transition:opacity .45s ease, transform .45s var(--ease-out);
+}
+.card.has-shot .pmeta{opacity:1; transform:none}
+
+.badge{
+  position:absolute; left:9px; top:9px; z-index:3;
+  font-family:var(--mono); font-size:11px; letter-spacing:.1em; color:#c8c8cf;
+  background:rgba(0,0,0,.62); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px);
+  padding:3px 7px; border-radius:3px;
+}
+.ext-arrow{
+  position:absolute; right:9px; bottom:9px; z-index:3;
+  font-size:11px; color:#c8c8cf;
+  background:rgba(0,0,0,.55); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px);
+  width:22px; height:22px; display:grid; place-items:center; border-radius:3px;
+}
+
+/* ★ 「在库里」原来是一圈彩色光晕（`0 0 24px -14px rgba(143,214,184,.55)`，
+   从老放映厅原样继承的）。它没做错事 —— 确实在编码"这部能看" ——
+   但**编码不一定非得用光晕**：暗底上的彩色模糊光晕是 AI 生成 UI 的招牌动作。
+   换成一道有色的内描边，同样的信息，不借那个默认动作。
+   对比也清楚了：能看的是一道绿边，不能看的是一道几乎看不见的白边。 */
+.card.have .poster{box-shadow:inset 0 0 0 1px rgba(143,214,184,.34)}
+.card.away .poster{box-shadow:inset 0 0 0 1px rgba(255,255,255,.03)}
+.card.away .title{color:#b9b9c0}
+
+.title{margin-top:14px; font-size:14px; letter-spacing:.005em; color:#dcdce1}
+.title em{font-style:normal; color:var(--dim); margin-left:7px; font-size:12.5px}
+.sub{margin-top:5px; font-size:12px; color:var(--dim); line-height:1.5}
+.by{margin-top:8px; font-family:var(--mono); font-size:11px; letter-spacing:.1em; color:var(--dim)}
+.by.me{color:var(--by-me)}
+.by .sub-mark{color:#7fa895; margin-left:8px}
+
+/* ── 舞台 ─────────────────────────────────────────────────────── */
+#stage{
+  position:fixed; inset:0; background:#000; z-index:50;
+  opacity:0; pointer-events:none;
+  transition:opacity .68s cubic-bezier(.4,0,.2,1);
+}
+#stage.on{opacity:1; pointer-events:auto}
+#stage video{width:100%; height:100%; object-fit:contain; display:block; background:#000}
+#stage video::cue{
+  background:rgba(0,0,0,.72); color:#fff;
+  font:500 22px/1.5 -apple-system,"PingFang SC",sans-serif;
+  text-shadow:0 1px 3px #000;
+}
+#ctrl{
+  position:absolute; left:0; right:0; bottom:0; z-index:3;
+  padding:80px 48px 34px;
+  background:linear-gradient(transparent,rgba(0,0,0,.86));
+  opacity:0; transform:translateY(12px);
+  transition:opacity .38s ease, transform .38s ease;
+}
+#stage.ui #ctrl{opacity:1; transform:none}
+
+.track{position:relative; height:14px; cursor:pointer; display:flex; align-items:center}
+.track .rail{position:absolute; left:0; right:0; height:2.5px; background:rgba(255,255,255,.15); border-radius:3px}
+.track .fill{position:absolute; left:0; height:2.5px; background:#e9e9ec; border-radius:3px; width:0}
+.track .knob{
+  position:absolute; width:9px; height:9px; margin-left:-4.5px; border-radius:50%;
+  background:#fff; opacity:0; transition:opacity .22s; pointer-events:none;
+}
+#stage.ui .track .knob{opacity:1}
+
+.row{
+  display:flex; align-items:baseline; gap:16px; margin-top:14px;
+  font-size:12px; color:#aeaeb7;
+}
+.row .now{color:#e2e2e7; letter-spacing:.02em}
+.row .sp{flex:1}
+.row .t{font-family:var(--mono); font-variant-numeric:tabular-nums; color:#9a9aa5; letter-spacing:.04em}
+.row .btn{
+  cursor:pointer; color:#9a9aa5; padding:2px 6px; border-radius:3px;
+  transition:color 120ms ease-out, background 120ms ease-out; letter-spacing:.06em;
+}
+.row .btn:hover{color:#e2e2e7; background:rgba(255,255,255,.07)}
+.row .btn:active{transform:scale(.96)}
+.row .btn.off{color:var(--dim)}
+.row .btn.on{color:var(--green)}
+
+.back{
+  position:absolute; left:48px; top:40px; z-index:3;
+  font-family:var(--mono); font-size:12px; letter-spacing:.16em; color:#8d8d96;
+  cursor:pointer; opacity:0; transition:opacity .38s ease, color 120ms ease-out;
+}
+.back:hover{color:#e9e9ec}
+#stage.ui .back{opacity:1}
+
+/* ── 面板 ─────────────────────────────────────────────────────── */
+#panel{
+  position:fixed; inset:0; z-index:60; display:grid; place-items:center;
+  background:rgba(5,5,7,.84);
+  -webkit-backdrop-filter:blur(22px); backdrop-filter:blur(22px);
+  opacity:0; pointer-events:none; transition:opacity .42s ease;
+}
+#panel.on{opacity:1; pointer-events:auto}
+.panel{
+  max-width:560px; padding:46px 48px 40px; margin:0 20px;
+  background:#0c0c0f; border:1px solid var(--line); border-radius:4px;
+  transform:translateY(10px); transition:transform .42s cubic-bezier(.2,.8,.2,1);
+}
+#panel.on .panel{transform:none}
+.panel .k{font-family:var(--mono); font-size:11px; letter-spacing:.18em; color:var(--dim); margin-bottom:16px}
+.panel h2{font-size:19px; font-weight:600; letter-spacing:.01em; margin-bottom:8px}
+.panel .m{font-size:12.5px; color:var(--dim); margin-bottom:22px}
+.panel p{font-size:13.5px; line-height:1.78; color:#a3a3ac; margin-bottom:26px; white-space:pre-wrap}
+.panel .warn{
+  font-size:12.5px; line-height:1.7; color:var(--warn);
+  background:rgba(176,143,94,.07); border-left:2px solid rgba(176,143,94,.4);
+  padding:12px 14px; margin-bottom:26px;
+}
+.panel .acts{display:flex; gap:14px; align-items:center; flex-wrap:wrap}
+.panel a{
+  font-family:var(--mono); font-size:12px; letter-spacing:.06em; text-decoration:none;
+  color:#0a0f0d; background:var(--green); padding:10px 20px; border-radius:3px;
+  transition:background 140ms ease-out, transform 120ms ease-out;
+}
+.panel a:hover{background:#a9e3ca; text-decoration:none}
+.panel a:active{transform:scale(.97); transition-duration:60ms}
+.panel .cancel{font-size:12.5px; letter-spacing:.04em; color:var(--dim); cursor:pointer; padding:10px 4px}
+.panel .cancel:hover{color:#c3c3cb}
+
+@media (max-width: 760px){
+  #wall{padding:32px 22px 90px}
+  .grid{grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:32px 18px}
+  .top{padding:9px 18px}
+  .live{display:none}
+  #ctrl{padding:60px 20px 24px}
+  .back{left:20px; top:24px}
+  .panel{padding:34px 26px 30px}
+}
+@media (prefers-reduced-motion: reduce){
+  #wall, #stage, .panel, .shot, .veil, .pmeta, .card{transition:none !important}
+}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <a class="brand" href="/">MUSIC<b>LAB</b></a>
+  <span class="crumb">放映厅</span>
+  <span class="spacer"></span>
+  <span class="live"><i class="pulse"></i>本地运行 · 不联网</span>
+</div>
+
+<div id="wall">
+  <div class="head">
+    <p class="note">
+      在库里点了就进；片单上还没下的、在外站的，点了先看说明。
+      字幕按 <kbd>c</kbd>，退场按 <kbd>Esc</kbd>。
+    </p>
+    <span class="n" id="count"></span>
+    <span class="tag" id="tag"></span>
+  </div>
+  <div id="sects"></div>
+</div>
+
+<div id="stage">
+  <div class="back" id="back">← 退场</div>
+  <video id="video" playsinline crossorigin="anonymous"></video>
+  <div id="ctrl">
+    <div class="track" id="track">
+      <div class="rail"></div><div class="fill" id="fill"></div><div class="knob" id="knob"></div>
+    </div>
+    <div class="row">
+      <span class="now" id="now"></span>
+      <span class="sp"></span>
+      <span class="btn" id="m15">−15</span>
+      <span class="btn" id="p15">+15</span>
+      <span class="btn off" id="cc">字幕</span>
+      <span class="t"><span id="tc">0:00</span> / <span id="td">0:00</span></span>
+    </div>
+  </div>
+</div>
+
+<div id="panel">
+  <div class="panel">
+    <div class="k" id="pK"></div>
+    <h2 id="pT"></h2>
+    <div class="m" id="pM"></div>
+    <p id="pP"></p>
+    <div class="warn" id="pW" style="display:none"></div>
+    <div class="acts">
+      <a id="pA" target="_blank" rel="noopener">去官方看</a>
+      <span class="cancel" id="pX">留在这里</span>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const COVER = '/screening/covers/';      /* 数据在 ScreeningRoom，server.py 指过去 */
+const MEDIA = '/screening/media/';
+
+let LIB = [], cur = null, uiTimer = null, ccOn = false;
+
+/* ── 片库 ──────────────────────────────────────────────────────── */
+fetch('/api/screening').then(r => r.json()).then(d => {
+  if (d.error) throw new Error(d.error);
+  LIB = d.shelf || [];
+  render();
+}).catch(e => {
+  $('#sects').innerHTML = '<div style="color:var(--dim)">片库读不到：' + esc(e.message) + '</div>';
+});
+
+function sect(title, note, items, group, dark){
+  if (!items.length) return '';
+  return '<div class="sect">' +
+    '<div class="sect-head"><h2>' + title + '</h2>' +
+      '<span class="c">' + items.length + '</span>' +
+      '<span class="line"></span>' +
+      '<span class="note">' + note + '</span></div>' +
+    '<div class="grid" data-group="' + group + '" data-dark="' + (dark || 'away') + '">' +
+      items.map(cardHTML).join('') +
+    '</div></div>';
+}
+
+/* ★ 2026-09-27 改：原来是「能看 / 不能看」两区，第二区一律叫「在外站」——
+   但 13 条里只有 h2h 那一条真在外站，另外 11 部是**片单挑好了、文件还没下**。
+   把它们叫「在外站」是在骗人：点了会发现既没链接也没文件，只有一句推荐理由。
+   所以拆成三区，一区一种状态。 */
+function render(){
+  const have  = LIB.filter(x => x.kind === 'local' && x.status === 'ready');
+  const queue = LIB.filter(x => x.kind === 'local' && x.status !== 'ready');
+  const away  = LIB.filter(x => x.kind !== 'local');
+  const groups = { have, queue, away };
+
+  $('#count').textContent = LIB.length + ' 条';
+  $('#tag').textContent = have.length + ' 部能直接看';
+  $('#sects').innerHTML =
+    sect('在库里', '点了就进', have, 'have', 'have') +
+    sect('片单上', '挑好了，文件还没下 —— 点了看它是部什么片', queue, 'queue', 'away') +
+    sect('在外站', '不在本地 —— 点了看去哪儿看', away, 'away', 'away');
+
+  document.querySelectorAll('.grid').forEach(g => {
+    const list = groups[g.dataset.group] || [];
+    const dark = g.dataset.dark;
+    [...g.children].forEach((c, i) => {
+      const item = list[i];
+      if (!item) return;
+      c.className = 'card ' + dark;
+      c.onclick = () => open(item);
+      wireShot(c.querySelector('.shot'), item);
+    });
+  });
+}
+
+function cardHTML(item){
+  const ready = item.kind === 'local' && item.status === 'ready';
+  /* 版式块永远先铺上（图挂了它就是你要看的东西），图盖在它上面 */
+  return '<div>' +
+      '<div class="poster">' +
+        '<div class="plate">' +
+          '<span class="yr">' + esc(item.year || '—') + '</span>' +
+          '<span class="rule"></span>' +
+          '<span class="meta">' + esc(plateMeta(item)) + '</span>' +
+        '</div>' +
+        '<img class="shot" alt="" loading="lazy" src="' + COVER + encodeURIComponent(item.id) + '.jpg">' +
+        '<span class="veil"></span>' +
+        '<span class="pmeta">' + esc(shotMeta(item)) + '</span>' +
+        /* ★ 箭头只在**真有外链**的时候出现。
+           原来写的是「不是 ready 就加」，结果「片单上」那 11 部
+           （挑好了、文件还没下、一个链接都没有）每张右下角都挂着 ↗ ——
+           在说"点了去外面看"，点下去却只弹一段说明。
+           ↗ 的意思就是"这里会离开本站"，那它就该看 url，不是看 ready。 */
+        (item.url ? '<span class="ext-arrow">↗</span>' : '') +
+        '<span class="badge">' + esc(badgeOf(item)) + '</span>' +
+      '</div>' +
+      '<div class="title">' + esc(item.title) +
+        (item.title_zh ? '<em>' + esc(item.title_zh) + '</em>' : '') + '</div>' +
+      '<div class="sub">' + esc(item.subtitle || item.year || '') + '</div>' +
+      '<div class="by' + (item.by ? ' me' : '') + '">' +
+        (item.by ? esc(item.by) : '老 C 推荐') +
+        (item.subs || item.sub_note ? '<span class="sub-mark">字幕 ' + esc(item.subs ? '已有' : '待定') + '</span>' : '') +
+      '</div>' +
+    '</div>';
+}
+
+/* ── 封面挂载：加载好就淡入，挂了就抽帧，抽不了就留版式块 ────────── */
+function wireShot(img, item){
+  if (!img) return;
+  const poster = img.closest('.poster');
+  const card = img.closest('.card');
+  const show = () => { img.classList.add('in'); card.classList.add('has-shot'); };
+  const giveUp = () => { img.remove(); };   /* 拿掉 img，下面的 .plate 自然露出来 */
+
+  if (img.complete){
+    if (img.naturalWidth) show();
+    else if (item.kind === 'local' && item.file) thumb(item, poster, show, giveUp);
+    else giveUp();
+    return;
+  }
+  img.addEventListener('load', show);
+  img.addEventListener('error', () => {
+    /* 没有预存封面、但片子已经在本地 —— 那就从片子里抽真帧。
+       这是原来 fallbackThumb() 想做的事，只是它找的宿主元素不存在。 */
+    if (item.kind === 'local' && item.file) thumb(item, poster, show, giveUp);
+    else giveUp();
+  });
+}
+
+/* ── 抽帧：从本地片里抓一帧当封面 ──────────────────────────────── */
+function thumb(item, host, ok, fail){
+  const v = document.createElement('video');
+  v.muted = true; v.playsInline = true; v.preload = 'metadata';
+  v.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none';
+  host.appendChild(v);
+  let done = false;
+  const kill = () => { try{ v.removeAttribute('src'); v.load(); }catch(e){} v.remove(); };
+  v.addEventListener('loadedmetadata', () => {
+    v.currentTime = Math.min(item.thumb_at || 100, Math.max(0, (v.duration || 200) * 0.12));
+  });
+  v.addEventListener('seeked', () => {
+    if (done) return; done = true;
+    try{
+      const cv = document.createElement('canvas');
+      cv.width = 480; cv.height = 320;
+      cv.getContext('2d').drawImage(v, 0, 0, 480, 320);
+      cv.className = 'shot in';            /* 走同一套层级和样式 */
+      host.insertBefore(cv, host.querySelector('.veil'));
+      ok();
+    }catch(e){ fail(); }
+    kill();
+  });
+  v.addEventListener('error', () => { if (!done) { done = true; fail(); } kill(); });
+  setTimeout(() => { if (!done) { done = true; fail(); kill(); } }, 12000);
+  v.src = MEDIA + encodeURIComponent(item.file);
+}
+
+function plateMeta(it){
+  if (it.runtime_min) return it.runtime_min + ' 分';
+  return it.kind === 'external' ? '外站' : '—';
+}
+/* 有图之后压在图上的那行 —— 年份 · 时长 */
+function shotMeta(it){
+  return [it.year, it.runtime_min ? it.runtime_min + ' 分' : null].filter(Boolean).join(' · ');
+}
+function badgeOf(it){
+  const ready = it.kind === 'local' && it.status === 'ready';
+  if (ready) return '本地' + (it.runtime_min ? ' · ' + it.runtime_min + '分' : '');
+  if (it.kind === 'external') return it.source || '外站';
+  if (it.status === 'downloading') return '下载中';
+  return '未下载';
+}
+
+/* ── 打开 ──────────────────────────────────────────────────────── */
+function open(item){
+  if (item.kind !== 'local' || item.status !== 'ready') return openPanel(item);
+  cur = item;
+  $('#now').textContent = item.title + (item.title_zh ? ' · ' + item.title_zh : '');
+  const v = $('#video');
+  v.src = MEDIA + encodeURIComponent(item.file);
+  loadSubs(item);
+  $('#wall').classList.add('out');
+  setTimeout(() => {
+    $('#stage').classList.add('on');
+    v.play().catch(()=>{});
+    flashUI();
+  }, 340);
+}
+
+/* 字幕：有话就挂，没话就不挂 */
+function loadSubs(item){
+  const v = $('#video');
+  [...v.querySelectorAll('track')].forEach(t => t.remove());
+  if (v.textTracks) [...v.textTracks].forEach(t => { t.mode = 'disabled'; });
+
+  const list = [];
+  if (item.subs) list.push(...[].concat(item.subs));
+  if (item.sub_auto !== false && item.file)
+    list.push(item.file.replace(/\.[^.]+$/, '.vtt'));
+
+  ccOn = false;
+  $('#cc').className = 'btn off';
+  $('#cc').style.display = list.length ? '' : 'none';
+  if (!list.length) return;
+
+  list.forEach((f, i) => {
+    const t = document.createElement('track');
+    t.kind = 'subtitles';
+    t.label = (i === 0 ? '中文' : '轨 ' + (i+1));
+    t.srclang = 'zh';
+    t.src = MEDIA + encodeURIComponent(f);
+    t.default = false;
+    t.addEventListener('load', () => { $('#cc').style.display = ''; });
+    v.appendChild(t);
+  });
+}
+
+function toggleCC(){
+  const v = $('#video');
+  if (!v.textTracks || !v.textTracks.length) return;
+  ccOn = !ccOn;
+  [...v.textTracks].forEach(t => { t.mode = ccOn ? 'showing' : 'disabled'; });
+  $('#cc').className = 'btn ' + (ccOn ? 'on' : 'off');
+  flashUI();
+}
+$('#cc').onclick = toggleCC;
+
+function close(){
+  $('#stage').classList.remove('on','ui');
+  const v = $('#video');
+  setTimeout(() => { v.pause(); v.removeAttribute('src'); v.load(); cur = null; }, 620);
+  $('#wall').classList.remove('out');
+}
+
+function flashUI(){
+  $('#stage').classList.add('ui');
+  clearTimeout(uiTimer);
+  uiTimer = setTimeout(() => {
+    $('#stage').classList.remove('ui');
+    /* 播放中字幕也一起沉下去，鼠标一动再回来 */
+    const v = $('#video');
+    if (ccOn && v.textTracks) [...v.textTracks].forEach(t => { if (t.mode==='showing') t.mode='hidden'; });
+  }, 3000);
+}
+document.addEventListener('mousemove', () => {
+  if (!$('#stage').classList.contains('on')) return;
+  const v = $('#video');
+  if (ccOn && v.textTracks) [...v.textTracks].forEach(t => { if (t.mode==='hidden') t.mode='showing'; });
+  flashUI();
+});
+$('#stage').addEventListener('click', e => {
+  if (e.target.id === 'video') v.paused ? v.play() : v.pause();
+});
+
+const v = $('#video');
+v.addEventListener('timeupdate', () => {
+  if (!v.duration) return;
+  const p = v.currentTime / v.duration;
+  $('#fill').style.width = (p*100) + '%';
+  $('#knob').style.left = (p*100) + '%';
+  $('#tc').textContent = fmt(v.currentTime);
+  $('#td').textContent = fmt(v.duration);
+});
+v.addEventListener('ended', close);
+
+function fmt(s){
+  s = Math.max(0, Math.floor(s || 0));
+  const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = s%60;
+  return (h ? h + ':' + String(m).padStart(2,'0') : m) + ':' + String(x).padStart(2,'0');
+}
+
+$('#track').addEventListener('click', e => {
+  const r = e.currentTarget.getBoundingClientRect();
+  if (v.duration) v.currentTime = ((e.clientX - r.left) / r.width) * v.duration;
+});
+$('#m15').onclick = () => { v.currentTime -= 15; flashUI(); };
+$('#p15').onclick = () => { v.currentTime += 15; flashUI(); };
+
+document.addEventListener('keydown', e => {
+  if ($('#panel').classList.contains('on')) { if (e.key === 'Escape') $('#panel').classList.remove('on'); return; }
+  if (!$('#stage').classList.contains('on')) return;
+  if (e.key === 'Escape') close();
+  if (e.key === ' ') { e.preventDefault(); v.paused ? v.play() : v.pause(); flashUI(); }
+  if (e.key === 'ArrowLeft')  { v.currentTime -= 15; flashUI(); }
+  if (e.key === 'ArrowRight') { v.currentTime += 15; flashUI(); }
+  if (e.key.toLowerCase() === 'c') toggleCC();
+});
+$('#back').onclick = close;
+
+/* ── 面板（外站 / 未下载的说明）────────────────────────────────── */
+function openPanel(item){
+  const ready = item.kind === 'local' && item.status === 'ready';
+  $('#pK').textContent = ready ? '' : (item.kind === 'external' ? (item.source || '外站') : '还没到本地');
+  $('#pK').style.display = ready ? 'none' : '';
+  $('#pT').textContent = item.title + (item.title_zh ? ' · ' + item.title_zh : '');
+  $('#pM').textContent = [item.subtitle, item.year].filter(Boolean).join(' · ');
+  $('#pP').textContent = item.why || (item.status === 'queued' ? '这部还在队列里，本地还没有文件。' : '');
+  const w = $('#pW');
+  if (item.warn) { w.textContent = item.warn; w.style.display = ''; }
+  else w.style.display = 'none';
+  const a = $('#pA');
+  if (item.url) { a.href = item.url; a.style.display = ''; a.textContent = item.link_text || '去官方看'; }
+  else a.style.display = 'none';
+  $('#panel').classList.add('on');
+}
+$('#pX').onclick = () => $('#panel').classList.remove('on');
+$('#panel').addEventListener('click', e => { if (e.target.id === 'panel') $('#panel').classList.remove('on'); });
+</script>
+</body>
+</html>

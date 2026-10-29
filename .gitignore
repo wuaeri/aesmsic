@@ -1,0 +1,42 @@
+# ── 音乐文件本体：版权归唱片公司和作者，不进仓库 ───────────────
+media/*
+!media/.gitkeep
+
+# 分轨输出（demucs 生成的 6 条 wav，一首几百 MB）
+stems/
+
+# 分析产物：37 首就 404 MB，其中大头是频谱的 base64
+analysis/
+
+# 曲库索引：由 tools/build_library.py 从你自己的 media/ 扫出来，
+# 每个人都不一样，不该进版本库。仓库里放的是 library.example.json。
+library.json
+
+# ── 解密链路：与播放器的功能无关，也不该被分发 ─────────────────
+# 这一支是从 QQ 音乐客户端格式取音源的工具，属于绕过 DRM。
+# 它跟本项目的核心（分析、呈现、播放）没有依赖关系，所以留在本地。
+tools/qmunlock/
+tools/batch_decrypt.py
+tools/cli.py
+tools/ekey_fetch.rs
+tools/qmcdec_lib.rs
+tools/requirements.txt
+
+# ── 调试残留 ────────────────────────────────────────────────────
+static/_probe*.html
+static/_diag_*.png
+static/cmp/
+static/cmp.html
+static/verify/
+static/_probe*
+
+# ── 环境 ────────────────────────────────────────────────────────
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+*.log
+
+# 编译产物（app/build.sh 生成）
+app/aesmsic.app/
